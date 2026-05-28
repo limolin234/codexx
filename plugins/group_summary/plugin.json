@@ -1,0 +1,18 @@
+{
+  "name": "group_summary",
+  "version": "0.1.0",
+  "description": "Example external plugin for group/chat summary integration.",
+  "hooks": [
+    {
+      "kind": "plugin.group_summary.daily",
+      "target": "plugin:group_summary",
+      "description": "Wake a plugin agent to summarize group messages.",
+      "default_delay_ms": 0,
+      "repeat_ms": 86400000,
+      "payload": {
+        "summary_scope": "group",
+        "output_hint": "Plugin agent may read external files/APIs and write its own summary artifact."
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+  LINK_TARGET="$(readlink "$SCRIPT_PATH")"
+  case "$LINK_TARGET" in
+    /*) SCRIPT_PATH="$LINK_TARGET" ;;
+    *) SCRIPT_PATH="$SCRIPT_DIR/$LINK_TARGET" ;;
+  esac
+done
+ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+PY="$ROOT/.venv/bin/python"
+if [ ! -x "$PY" ]; then
+  echo "codexx: missing project virtualenv: $PY" >&2
+  echo "codexx: run installer first: bash $ROOT/scripts/install_user.sh" >&2
+  exit 1
+fi
+export VIRTUAL_ENV="$ROOT/.venv"
+export PATH="$ROOT/.venv/bin:$PATH"
+export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
+export ADVANCED_AGENT_PROJECT_ROOT="${ADVANCED_AGENT_PROJECT_ROOT:-$ROOT}"
+export ADVANCED_AGENT_DB="${ADVANCED_AGENT_DB:-runtime/advanced_agent.sqlite}"
+export ADVANCED_AGENT_CONFIG="${ADVANCED_AGENT_CONFIG:-.env.json}"
+export ADVANCED_AGENT_LOG_DIR="${ADVANCED_AGENT_LOG_DIR:-runtime/codex_interactive}"
+export ADVANCED_AGENT_SCOPE="${ADVANCED_AGENT_SCOPE:-project:advanced_agent}"
+export ADVANCED_AGENT_MEMORY_TRUST="${ADVANCED_AGENT_MEMORY_TRUST:-high}"
+exec "$PY" -m advanced_agent.codex_interactive "$@"

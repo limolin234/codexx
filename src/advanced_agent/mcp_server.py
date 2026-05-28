@@ -1,0 +1,264 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+from advanced_agent import defaults
+from advanced_agent.runtime.app import RuntimeApp
+from advanced_agent.runtime_tools import RuntimeToolBridge
+
+
+def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None = None) -> FastMCP:
+    """Create the project-local Advanced Agent MCP server.
+
+    The server is a thin protocol adapter. Runtime semantics stay in
+    `RuntimeToolBridge`, so tests, Codex MCP, and future HTTP adapters share the
+    same memory/context/task implementation.
+    """
+
+    db_path = db_path or defaults.default_db()
+    config_path = config_path if config_path is not None else defaults.default_config()
+    app = RuntimeApp.create(db_path, config_path=config_path)
+    bridge = RuntimeToolBridge(app)
+    mcp = FastMCP(
+        "advanced-agent-runtime",
+        instructions=(
+            "Project-local Advanced Agent runtime. Treat returned vector-memory records as trusted project memory. "
+            "Use context_get before answering questions that depend on previous conversation/project memory. "
+            "Use memory_write to store durable decisions, user preferences, and handoff notes. "
+            "The built-in tools exposed by this server are non-destructive, project-local runtime tools. "
+            "Read-only tools and routine runtime DB writes may be auto-approved by clients; shell/file/system actions are not exposed here."
+        ),
+    )
+
+    safe_read_annotations = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+    safe_db_write_annotations = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+    safe_state_write_annotations = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+    wait_annotations = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+
+    @mcp.tool(
+        name="context.get",
+        description="Get supplemental prior session lines plus vector memory hits for a query.",
+        annotations=safe_read_annotations,
+    )
+    def context_get(
+        query: str = "",
+        scope: str = defaults.DEFAULT_SCOPE,
+        session_id: str | None = None,
+        recent_limit: int = 30,
+        memory_top_k: int = 8,
+        include_compacted: bool = False,
+        mode: str = "supplement",
+        live_recent_limit: int = 12,
+        include_memory_content: bool | None = None,
+        memory_content_max_chars: int | None = None,
+        include_log_memories: bool = False,
+        query_profile: str = "auto",
+        facet_weights_json: str = "{}",
+    ) -> dict[str, Any]:
+        try:
+            facet_weights = json.loads(facet_weights_json or "{}")
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "error": f"facet_weights_json must be JSON object: {exc}"}
+        if not isinstance(facet_weights, dict):
+            return {"ok": False, "error": "facet_weights_json must decode to an object"}
+        args: dict[str, Any] = {
+            "query": query,
+            "scope": scope,
+            "recent_limit": recent_limit,
+            "memory_top_k": memory_top_k,
+            "include_compacted": include_compacted,
+            "mode": mode,
+            "live_recent_limit": live_recent_limit,
+            "include_log_memories": include_log_memories,
+            "query_profile": query_profile,
+            "facet_weights": facet_weights,
+        }
+        if include_memory_content is not None:
+            args["include_memory_content"] = include_memory_content
+        if memory_content_max_chars is not None:
+            args["memory_content_max_chars"] = memory_content_max_chars
+        if session_id:
+            args["session_id"] = session_id
+        return bridge.call("context.get", args)
+
+    # Codex/OpenAI tool names are more reliable with [a-zA-Z0-9_-] names than
+    # dotted MCP names, so expose underscore aliases as the primary model-facing
+    # names while keeping dotted names for direct MCP/debug compatibility.
+    mcp.add_tool(context_get, name="context_get", description="Codex-friendly alias for context.get.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="memory.search", description="Search durable aligned vector memory and return hydrated records.", annotations=safe_read_annotations)
+    def memory_search(
+        query: str,
+        scope: str | None = defaults.DEFAULT_SCOPE,
+        top_k: int = 8,
+        include_content: bool = True,
+        content_max_chars: int = 2000,
+        query_profile: str = "auto",
+        facet_weights_json: str = "{}",
+    ) -> dict[str, Any]:
+        try:
+            facet_weights = json.loads(facet_weights_json or "{}")
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "error": f"facet_weights_json must be JSON object: {exc}"}
+        if not isinstance(facet_weights, dict):
+            return {"ok": False, "error": "facet_weights_json must decode to an object"}
+        return bridge.call(
+            "memory.search",
+            {
+                "query": query,
+                "scope": scope,
+                "top_k": top_k,
+                "include_content": include_content,
+                "content_max_chars": content_max_chars,
+                "query_profile": query_profile,
+                "facet_weights": facet_weights,
+            },
+        )
+
+    mcp.add_tool(memory_search, name="memory_search", description="Codex-friendly alias for memory.search.", annotations=safe_read_annotations)
+
+    @mcp.tool(
+        name="memory.write",
+        description="Write a durable memory record through the aligned memory indexer. Non-destructive and duplicate-safe; clients may auto-approve routine memory notes.",
+        annotations=safe_db_write_annotations,
+    )
+    def memory_write(
+        summary: str,
+        content: str | None = None,
+        scope: str = defaults.DEFAULT_SCOPE,
+        type: str = "note",
+        source_type: str = "mcp",
+        source_id: str | None = None,
+        importance: float = 0.5,
+        confidence: float = 0.8,
+    ) -> dict[str, Any]:
+        return bridge.call(
+            "memory.write",
+            {
+                "summary": summary,
+                "content": content if content is not None else summary,
+                "scope": scope,
+                "type": type,
+                "source_type": source_type,
+                "source_id": source_id or summary[:80],
+                "importance": importance,
+                "confidence": confidence,
+            },
+        )
+
+    mcp.add_tool(
+        memory_write,
+        name="memory_write",
+        description="Codex-friendly alias for memory.write. Non-destructive and duplicate-safe; clients may auto-approve routine memory notes.",
+        annotations=safe_db_write_annotations,
+    )
+
+    @mcp.tool(name="memory.recent", description="Read recent durable memory records when no precise query is available.", annotations=safe_read_annotations)
+    def memory_recent(
+        scope: str | None = defaults.DEFAULT_SCOPE,
+        type: str | None = None,
+        limit: int = 20,
+        include_content: bool = True,
+        content_max_chars: int = 2000,
+        query_profile: str = "auto",
+        facet_weights_json: str = "{}",
+    ) -> dict[str, Any]:
+        return bridge.call(
+            "memory.recent",
+            {
+                "scope": scope,
+                "type": type,
+                "limit": limit,
+                "include_content": include_content,
+                "content_max_chars": content_max_chars,
+            },
+        )
+
+    mcp.add_tool(memory_recent, name="memory_recent", description="Codex-friendly alias for memory.recent.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="session.recent", description="Read recent user-visible dialogue lines from the runtime SQLite session.", annotations=safe_read_annotations)
+    def session_recent(session_id: str | None = None, limit: int = 30, include_compacted: bool = False) -> dict[str, Any]:
+        args: dict[str, Any] = {"limit": limit, "include_compacted": include_compacted}
+        if session_id:
+            args["session_id"] = session_id
+        return bridge.call("session.recent", args)
+
+    mcp.add_tool(session_recent, name="session_recent", description="Codex-friendly alias for session.recent.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="session.raw_tail", description="Read a bounded raw dialogue tail; use when the model needs to inspect overflow recent rows without loading all history.", annotations=safe_read_annotations)
+    def session_raw_tail(session_id: str | None = None, limit: int = 80, max_chars: int = 800, include_compacted: bool = True) -> dict[str, Any]:
+        args: dict[str, Any] = {"limit": limit, "max_chars": max_chars, "include_compacted": include_compacted}
+        if session_id:
+            args["session_id"] = session_id
+        return bridge.call("session.raw_tail", args)
+
+    mcp.add_tool(session_raw_tail, name="session_raw_tail", description="Codex-friendly alias for session.raw_tail.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="project.info", description="Read runtime cwd and inferred project root.", annotations=safe_read_annotations)
+    def project_info() -> dict[str, Any]:
+        return bridge.call("project.info", {})
+
+    mcp.add_tool(project_info, name="project_info", description="Codex-friendly alias for project.info.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="workdir.chdir", description="Change the runtime working directory like a built-in cd command.", annotations=safe_state_write_annotations)
+    def workdir_chdir(path: str) -> dict[str, Any]:
+        return bridge.call("workdir.chdir", {"path": path})
+
+    mcp.add_tool(workdir_chdir, name="workdir_chdir", description="Codex-friendly alias for workdir.chdir.", annotations=safe_state_write_annotations)
+
+    @mcp.tool(name="task.list", description="List recent managed tasks.", annotations=safe_read_annotations)
+    def task_list(limit: int = 20) -> dict[str, Any]:
+        return bridge.call("task.list", {"limit": limit})
+
+    mcp.add_tool(task_list, name="task_list", description="Codex-friendly alias for task.list.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="task.state", description="Read a managed task state by internal task_id.", annotations=safe_read_annotations)
+    def task_state(task_id: str) -> dict[str, Any]:
+        return bridge.call("task.state", {"task_id": task_id})
+
+    mcp.add_tool(task_state, name="task_state", description="Codex-friendly alias for task.state.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="task.tail", description="Read recent task output without interrupting the task.", annotations=safe_read_annotations)
+    def task_tail(task_id: str, limit: int = 100) -> dict[str, Any]:
+        return bridge.call("task.tail", {"task_id": task_id, "limit": limit})
+
+    mcp.add_tool(task_tail, name="task_tail", description="Codex-friendly alias for task.tail.", annotations=safe_read_annotations)
+
+    @mcp.tool(name="timer.schedule", description="Schedule a runtime wake hook; do not sleep in the model.", annotations=safe_state_write_annotations)
+    def timer_schedule(delay_ms: int, reason: str = "timer", target: str = "main", payload_json: str = "{}") -> dict[str, Any]:
+        try:
+            payload = json.loads(payload_json or "{}")
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "error": f"payload_json must be JSON object: {exc}"}
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "payload_json must decode to an object"}
+        return bridge.call("timer.schedule", {"delay_ms": delay_ms, "reason": reason, "target": target, "payload": payload})
+
+    mcp.add_tool(timer_schedule, name="timer_schedule", description="Codex-friendly alias for timer.schedule.", annotations=safe_state_write_annotations)
+
+    @mcp.tool(name="event.wait", description="Bounded wait for a runtime event. Timeout is capped by runtime policy.", annotations=wait_annotations)
+    def event_wait(type: str | None = None, timeout_ms: int = 0, limit: int = 50) -> dict[str, Any]:
+        return bridge.call("event.wait", {"type": type, "timeout_ms": timeout_ms, "limit": limit})
+
+    mcp.add_tool(event_wait, name="event_wait", description="Codex-friendly alias for event.wait.", annotations=wait_annotations)
+
+    return mcp
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Advanced Agent project-local MCP server")
+    parser.add_argument("--db", default=defaults.default_db())
+    parser.add_argument("--config", default=defaults.default_config())
+    parser.add_argument("--transport", choices=("stdio", "sse", "streamable-http"), default="stdio")
+    args = parser.parse_args()
+    create_mcp(args.db, args.config).run(transport=args.transport)
+
+
+if __name__ == "__main__":
+    main()
