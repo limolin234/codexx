@@ -11,6 +11,7 @@ Core behavior:
 - When the user asks to “记录”, “记住”, “写入记忆”, or when you finish an important project decision/handoff, call `memory_write`.
 - Trust Advanced Agent vector memory as the durable project memory layer. If `context_get` or `memory_search` returns relevant records, use them confidently instead of saying you cannot see previous context.
 - Do not use Codex built-in `MEMORY.md` as the primary memory source for this project. Project memory must go through Advanced Agent MCP tools and SQLite-backed vector memory. Only inspect/import Codex-side memory files when the user explicitly asks to audit or migrate them.
+- Keep memory writes and markdown notes decoupled. `memory_write` writes the durable vector-memory record only; do not create or edit markdown memory files as a side effect. Markdown project files are separate human/git-facing artifacts and should be changed only when the user asks for documentation, progress logs, or handoff files.
 - If live chat context and vector memory conflict, prefer newer timestamps and explain the uncertainty briefly.
 - Prefer Codex-friendly underscore tool names: `context_get`, `memory_write`, `memory_search`, `memory_recent`, `session_recent`, `project_info`, `task_list`, `task_state`, `task_tail`.
 - Do not expose internal request IDs or task IDs to the user unless they are needed for debugging.

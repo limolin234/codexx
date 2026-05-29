@@ -104,7 +104,20 @@ The current sqlite-vec adapter implements this as overfetch + facet-weighted
 reranking. A stronger backend can perform the same profile logic with named
 vectors/hybrid search.
 
-## 6. Raw tail / ring-buffer policy
+## 6. Markdown boundary
+
+Durable memory writes go through `MemoryIndexer` into the SQLite-backed
+vector-memory store. Markdown files are not part of the memory write path and
+must not be created or edited as an automatic side effect of `memory_write`.
+
+Markdown remains useful for human-facing project artifacts such as `AGENTS.md`,
+progress logs, deployment notes, and handoff documents. Those files should be
+updated through normal file edits when the user asks for such an artifact or
+when the project workflow explicitly requires a checked-in handoff. The memory
+layer should index the semantic record; markdown documentation is a separate,
+opt-in artifact.
+
+## 7. Raw tail / ring-buffer policy
 
 Raw dialogue is kept in SQLite history, but the model should not receive the
 whole raw stream by default. Instead it can explicitly call:
@@ -118,7 +131,7 @@ This returns a bounded, ring-buffer-like recent raw window with `limit` and
 semantic memory. Main prompts now tell the model to call raw tail tools when it
 needs more recent raw rows instead of asking the user to restate.
 
-## 7. Ingest policy
+## 8. Ingest policy
 
 入库分类应发生在 memory ingress 阶段：
 

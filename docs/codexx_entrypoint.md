@@ -106,6 +106,12 @@ The intended first-turn behavior is recall-on-demand:
 - `memory_write` remains the durable path for decisions, preferences, progress,
   and handoffs.
 
+`memory_write` is intentionally a vector-memory/database operation only. It
+does not imply writing markdown memory notes. Human/git-facing markdown files
+such as project progress logs, handoff documents, or docs should be edited only
+when the user asks for that artifact; they are not coupled to routine memory
+writes.
+
 For debugging or a manual continuation session, raw-tail startup injection is
 still available as an opt-in:
 
