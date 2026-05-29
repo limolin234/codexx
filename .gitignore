@@ -7,6 +7,7 @@ __pycache__/
 runtime/*.sqlite
 runtime/*.sqlite-*
 runtime/codex_interactive/*.terminal.log
+runtime/codex_interactive/*.instructions.md
 .env.json
 .env.*.json
 !.env.example.json

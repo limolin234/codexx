@@ -21,6 +21,8 @@ user/session/task content
   agents: it skips the live recent tail that Codex likely already sees and
   returns only older supplemental session lines plus vector memory hits. Use
   `mode="full"` when a caller explicitly needs the complete bounded view.
+  These are the only valid modes; callers must not send legacy values such as
+  `brief`.
 
 ## Replacement / compaction
 

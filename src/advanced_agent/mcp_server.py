@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -59,7 +59,7 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
         recent_limit: int = 30,
         memory_top_k: int = 8,
         include_compacted: bool = False,
-        mode: str = "supplement",
+        mode: Literal["supplement", "full"] = "supplement",
         live_recent_limit: int = 12,
         include_memory_content: bool | None = None,
         memory_content_max_chars: int | None = None,

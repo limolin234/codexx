@@ -46,6 +46,7 @@ async def test_mcp_exposes_memory_toolcall_roundtrip(tmp_path) -> None:
     assert tools["memory.write"].annotations.idempotentHint is True
     assert tools["memory.search"].annotations.readOnlyHint is True
     assert tools["workdir.chdir"].annotations.readOnlyHint is False
+    assert tools["context_get"].inputSchema["properties"]["mode"]["enum"] == ["supplement", "full"]
 
     _, write_data = await mcp.call_tool(
         "memory.write",

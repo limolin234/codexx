@@ -140,7 +140,8 @@ marks interrupted sessions as `interrupted and saved`.
 Codex instructions now tell the model to trust Advanced Agent vector memory as the
 durable project memory layer:
 
-- call `context_get` for previous-context/project-state questions;
+- call `context_get` for previous-context/project-state questions; if setting
+  `mode`, use only `supplement` or `full`;
 - call `memory_search` for explicit long-term memory lookup;
 - call `memory_write` for records, decisions, preferences, and handoffs;
 - if vector memory returns relevant records, use them instead of claiming that no

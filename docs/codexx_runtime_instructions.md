@@ -16,7 +16,8 @@ Use Advanced Agent MCP tools as the durable memory/runtime layer:
 
 - On the first non-trivial user request in a wrapper session, call `context_get`
   with the user request as the query before answering. Skip this only for
-  clearly self-contained trivial requests.
+  clearly self-contained trivial requests. If you pass `mode`, use only
+  `supplement` or `full`; do not use legacy values such as `brief`.
 - For previous-context, progress, project-state, or "what did we say before"
   questions, call `context_get` first.
 - For explicit long-term lookup, use `memory_search`.

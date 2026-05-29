@@ -69,10 +69,12 @@ There are two context paths:
    injection. For them, expose `context.get(query, session_id)` and instruct the
    agent to call it at the start of context-dependent tasks.
 
-`context.get` defaults to `mode="supplement"` for Codex/external agents. In this
-mode it assumes the caller already has the live recent dialogue in its own model
-context, skips that tail, and only returns older supplemental session lines plus
-vector memories. `mode="full"` is still available for debugging or internal
+`context.get` defaults to `mode="supplement"` for Codex/external agents. The
+MCP schema exposes the complete mode enum: `supplement` and `full` only; do
+not use older names such as `brief`. In supplement mode it assumes the
+caller already has the live recent dialogue in its own model context, skips
+that tail, and only returns older supplemental session lines plus vector
+memories. `mode="full"` is still available for debugging or internal
 callers that need the complete bounded view.
 
 `context.get` returns:
