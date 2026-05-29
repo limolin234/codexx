@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import secrets
 from dataclasses import dataclass
@@ -87,16 +88,56 @@ class SQLiteVecStore:
         # a central allocator table.
         return secrets.randbits(63) or 1
 
-    def add_memory(self, scope: str, type_: str, summary: str, labels: dict[str, str], content: str | None = None, importance: float = 0.5, confidence: float = 0.8, source_ref: str | None = None) -> str:
+    def add_memory(
+        self,
+        scope: str,
+        type_: str,
+        summary: str,
+        labels: dict[str, str],
+        content: str | None = None,
+        importance: float = 0.5,
+        confidence: float = 0.8,
+        source_ref: str | None = None,
+        source_strength: str = "unknown",
+        stability: str = "normal",
+        last_evidence_at_ms: int | None = None,
+        supersedes_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> str:
         now = self.time.wall_ms()
         memory_id = new_id("mem")
+        metadata_json = json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True) if metadata else None
         with self.db.transaction():
             self.db.execute(
                 """INSERT INTO memory_items
-                (id,scope,type,title,summary,content,confidence,importance,status,created_at_ms,updated_at_ms,source_ref)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (memory_id, scope, type_, None, summary, content, confidence, importance, "active", now, now, source_ref),
+                (id,scope,type,title,summary,content,confidence,importance,status,created_at_ms,updated_at_ms,source_ref,
+                source_strength,stability,last_evidence_at_ms,supersedes_id,metadata_json)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    memory_id,
+                    scope,
+                    type_,
+                    None,
+                    summary,
+                    content,
+                    confidence,
+                    importance,
+                    "active",
+                    now,
+                    now,
+                    source_ref,
+                    source_strength,
+                    stability,
+                    last_evidence_at_ms,
+                    supersedes_id,
+                    metadata_json,
+                ),
             )
+            if supersedes_id:
+                self.db.execute(
+                    "UPDATE memory_items SET status='superseded', superseded_by=?, updated_at_ms=? WHERE id=? AND status='active'",
+                    (memory_id, now, supersedes_id),
+                )
             for label_kind, label_text in labels.items():
                 rowid = self._next_rowid()
                 vector = self.embedding.embed(label_text)
@@ -172,6 +213,24 @@ class SQLiteVecStore:
                 (memory_id, item["scope"], item["type"], item["summary"], item["content"] or "", facets_text),
             )
             return len(labels)
+
+    def delete_memory_indexes(self, memory_id: str) -> int:
+        """Delete vector/FTS/facet index rows for a memory item, keeping item metadata."""
+
+        deleted = 0
+        with self.db.transaction():
+            old_vectors = self.db.query_all("SELECT vector_collection, vector_id FROM memory_vectors WHERE memory_id=?", (memory_id,))
+            for row in old_vectors:
+                if row["vector_collection"] == self.table:
+                    try:
+                        cur = self.db.conn.execute(f"DELETE FROM {self.table} WHERE rowid=?", (int(row["vector_id"]),))
+                        deleted += cur.rowcount
+                    except Exception:
+                        pass
+            deleted += self.db.execute("DELETE FROM memory_vectors WHERE memory_id=?", (memory_id,)).rowcount
+            deleted += self.db.execute("DELETE FROM memory_facets WHERE memory_id=?", (memory_id,)).rowcount
+            deleted += self.db.execute("DELETE FROM memory_fts WHERE memory_id=?", (memory_id,)).rowcount
+        return deleted
 
     def search(self, query: str, scope: str | None = None, top_k: int = 5, query_profile: str = "auto", facet_weights: dict[str, float] | None = None) -> list[VectorHit]:
         top_k = max(1, min(int(top_k), 128))

@@ -21,6 +21,10 @@ class MemoryCandidate:
     confidence: float = 0.8
     facets: dict[str, str] = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+    source_strength: str = "unknown"
+    stability: str = "normal"
+    last_evidence_at_ms: int | None = None
+    supersedes_id: str | None = None
 
     @property
     def source_ref(self) -> str:
@@ -71,5 +75,10 @@ class MemoryIndexer:
             importance=candidate.importance,
             confidence=candidate.confidence,
             source_ref=candidate.source_ref,
+            source_strength=candidate.source_strength,
+            stability=candidate.stability,
+            last_evidence_at_ms=candidate.last_evidence_at_ms,
+            supersedes_id=candidate.supersedes_id,
+            metadata=candidate.metadata,
         )
         return MemoryIndexResult(memory_id=memory_id, created=True, reason="indexed")

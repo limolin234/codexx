@@ -39,11 +39,12 @@ Then in Codex, ask it to use the tool instead of guessing:
 
 Useful first tools:
 
-- `context_get`: recent session lines + vector memory hits.
+- `context_get`: supplemental prior session lines + vector memory hits. Use it
+  for context-dependent questions, explicit memory lookup, and recent-memory
+  recaps. Empty-query recent reads are newest-first by `updated_at_ms DESC,
+  created_at_ms DESC, rowid DESC`.
 - `memory_write`: write durable decisions, preferences, handoff notes.
-- `memory_search`: search hydrated memory records, including content snippets.
-- `memory_recent`: inspect recent memory when the query is vague.
-- `session_recent`: inspect recent runtime dialogue lines.
+- `session_raw_tail`: inspect bounded raw overflow dialogue only when needed.
 - `project_info`: get cwd/project root.
 
 Dotted aliases such as `context.get` and `memory.write` also exist for direct MCP
@@ -65,11 +66,12 @@ async def main():
         'scope': 'project:advanced_agent',
     })
     print(w)
-    _, s = await mcp.call_tool('memory_search', {
+    _, s = await mcp.call_tool('context_get', {
         'query': 'toolcall search memory',
         'scope': 'project:advanced_agent',
+        'include_memory_content': True,
     })
-    print(s['hits'][0])
+    print(s['memories'][0])
 
 anyio.run(main)
 PY

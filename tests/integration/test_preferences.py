@@ -15,7 +15,8 @@ def test_preference_worker_bounded_profile(tmp_path) -> None:
     assert len(summary) <= 1200
     main_overlays = app.overlays.overlays_for("project:test", "main")
     assert main_overlays
-    assert "maintainable" in main_overlays[0]
+    assert "Lightweight startup user-profile hints" in main_overlays[0]
+    assert "暂无稳定偏好" in main_overlays[0]
 
 
 def test_prompt_overlay_total_limit(tmp_path) -> None:

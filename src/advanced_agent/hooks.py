@@ -14,6 +14,8 @@ class HookKind(StrEnum):
     PREFERENCE_MAINTENANCE = "preference_maintenance"
     MEMORY_INDEX = "memory_index"
     COMPACT_MEMORY = "compact_memory"
+    MEMORY_MAINTENANCE = "memory_maintenance"
+    RAW_RETENTION = "raw_retention"
     SLEEP = "sleep"
 
 

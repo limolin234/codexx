@@ -19,7 +19,8 @@ advanced_agent wrapper
      `-c mcp_servers...` overrides
   -> passes ADVANCED_AGENT_SESSION / DB / LOG env vars
   -> tees terminal bytes to runtime/codex_interactive/*.terminal.log
-  -> on exit, indexes the transcript tail through MemoryIndexer
+  -> on exit, buffers a cleaned terminal tail for `session_raw_tail` inspection
+     without writing durable raw-log memory
 ```
 
 This does not replace Codex. It records and contextualizes Codex.
@@ -27,8 +28,8 @@ This does not replace Codex. It records and contextualizes Codex.
 Limitations:
 
 - PTY logs are byte streams, not structured Codex events.
-- Full semantic memory should come from end-of-session summaries or explicit MCP
-  `memory.write` calls, not raw terminal text alone.
+- Durable semantic memory should come from concise handoffs/decisions or explicit
+  MCP `memory.write` calls, not raw terminal text.
 - MCP protocol is configured by the wrapper by default. Use `--no-mcp` only
   when debugging raw Codex pass-through.
 
@@ -39,11 +40,12 @@ PYTHONPATH=src .venv/bin/python -m advanced_agent.codex_interactive --db runtime
 ```
 
 This is now the preferred project entrypoint. Codex remains interactive, while
-the wrapper makes tools such as `context.get`, `memory.write`, `memory.search`,
-`task.*`, `timer.schedule`, and `event.wait` available without editing global
-`~/.codex/config.toml`.
+the wrapper makes a small model-facing tool set such as `context.get`,
+`memory.write`, `session.raw_tail`, and `project.info` available without editing
+global `~/.codex/config.toml`. Low-level search/recent/task/timer/event tools
+remain internal runtime capabilities unless deliberately re-exposed.
 
 Codex should prefer underscore aliases (`context_get`, `memory_write`,
-`memory_search`, `task_tail`, etc.) because OpenAI-style tool/function names are
+`session_raw_tail`, `project_info`) because OpenAI-style tool/function names are
 more reliable without dots. Dotted MCP names are still exposed for direct debug
 compatibility.

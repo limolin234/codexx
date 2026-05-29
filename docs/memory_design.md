@@ -43,8 +43,9 @@ Common `memory_items.type` values:
 - `warning`: risk, pitfall, or negative constraint.
 - `handoff`: continuation note / next-step state.
 - `chat`: low-stakes conversational background.
-- `codex_interactive_log`: noisy terminal/transcript-derived record, excluded
-  from normal `context_get` unless requested.
+- `codex_interactive_log`: legacy noisy terminal/transcript-derived record.
+  New wrapper closes do not create this durable type; maintenance purges old
+  records. Use `session_raw_tail` for bounded diagnostic raw text instead.
 
 Kinds are not separate databases. They are metadata used for filtering,
 weighting, and lifecycle control.
@@ -128,8 +129,10 @@ session.raw_tail / session_raw_tail
 
 This returns a bounded, ring-buffer-like recent raw window with `limit` and
 `max_chars`. It is for overflow inspection and local continuity, not durable
-semantic memory. Main prompts now tell the model to call raw tail tools when it
-needs more recent raw rows instead of asking the user to restate.
+semantic memory. Wrapper close copies cleaned terminal tail into this raw-tail
+path only; it does not persist raw transcript memories. Main prompts tell the
+model to call raw tail tools when it needs more recent raw rows instead of
+asking the user to restate.
 
 ## 8. Ingest policy
 
@@ -182,3 +185,20 @@ memory source.  Treat it only as an external/importable historical artifact.
 Normal project memory reads and writes must go through the Advanced Agent MCP
 tools and SQLite-backed vector memory so scope, source refs, scoring, migration,
 and auditing stay under this project's control.
+
+## Automatic profile and lifecycle policy
+
+User profile facts can be represented as vector-memory records (`user_trait`,
+`preference`, `workflow_habit`) while the wrapper maintains a compact profile
+snapshot/overlay for restrained injection. The wrapper must not keyword-match
+semantics; it routes events and lets model-based profile maintenance compare new
+user-originated evidence against current profile traits.
+
+Long-term writes should include lifecycle metadata: `source_strength`,
+`stability`, `usage_count`, `last_used_at_ms`, `last_evidence_at_ms`, and
+supersession links. Retrieval marks records as used, and cleanup first soft-marks
+records inactive/superseded/deleted, then archives vector/FTS/facet rows, then
+physically purges old deleted tombstones.
+
+See `docs/wrapper_auto_memory.md` for the wrapper model-routing and injection
+budget contract.

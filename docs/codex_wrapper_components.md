@@ -52,8 +52,9 @@ memory ingestion.
   - Mirrors terminal bytes to `runtime/codex_interactive/*.terminal.log`.
   - Handles wrapper-level `Ctrl+C`, terminates the Codex process group, and
     exits `130`.
-  - Cleans the transcript tail and sends it to `MemoryIndexer` as
-    `codex_interactive_log`.
+  - Cleans the transcript tail and appends it to the bounded session raw-tail
+    buffer for short-term inspection only. It does not create durable raw-log
+    memory records on close.
 
 ### Defaults and config
 
@@ -84,9 +85,11 @@ memory ingestion.
 - `src/advanced_agent/runtime/app.py`
   - Builds the runtime application used by the wrapper and MCP server.
 - `src/advanced_agent/memory_indexer.py`
-  - Indexes wrapper transcript tail into memory.
+  - Indexes explicit durable memories such as handoffs, decisions, and
+    verifications. Wrapper raw transcript tails are intentionally not routed
+    through it.
 - `src/advanced_agent/memory_facets.py`
-  - Classifies `codex_interactive_log` as terminal/transcript-derived memory.
+  - Keeps facet policy for durable memory types and legacy raw-log cleanup.
 
 ### Runtime outputs
 

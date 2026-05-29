@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from advanced_agent.codex_interactive import DEFAULT_BOOTSTRAP_CHARS, _clean_terminal_log, _ingest_codex_log_tail, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, build_combined_model_instructions, codex_mcp_config_args, should_inject_bootstrap
+from advanced_agent.codex_interactive import DEFAULT_BOOTSTRAP_CHARS, _append_codex_log_tail_to_ring_buffer, _append_codex_tail_to_ring_buffer, _clean_terminal_log, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, build_combined_model_instructions, codex_mcp_config_args, should_inject_bootstrap
 from advanced_agent.runtime.app import RuntimeApp
 
 
@@ -55,18 +55,29 @@ def test_clean_terminal_log_removes_ansi_noise() -> None:
     assert "\x1b" not in cleaned
 
 
-def test_ingest_codex_log_tail_cleans_and_marks_interrupt(tmp_path) -> None:
+def test_codex_log_tail_buffers_raw_tail_without_durable_memory(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.default_session()
     app.start_user_request(sid, "closing buffer should be preserved")
     log_path = tmp_path / "codex.log"
     log_path.write_text("\x1b[31mworking\x1b[0m\n[WRAPPER_CTRL_C_INTERRUPTED]\n", encoding="utf-8")
-    _ingest_codex_log_tail(app, sid, "codexsess_test", log_path)
-    records = app.memory.recent(scope="project:advanced_agent", limit=3)
-    assert records
-    assert any("interrupted and saved" in record.summary for record in records)
-    assert all("\x1b" not in (record.content or "") for record in records)
-    assert any(record.type == "handoff" and "closing buffer" in (record.content or "") for record in records)
+    _append_codex_log_tail_to_ring_buffer(app, sid, "codexsess_test", log_path)
+    records = app.memory.recent(scope="project:advanced_agent", limit=5)
+    assert all(record.type != "codex_interactive_log" for record in records)
+    assert all("Codex wrapper closing ring-buffer handoff" not in record.summary for record in records)
+    raw_tail = app.sessions.raw_tail_lines(sid, limit=5, max_chars=300)
+    assert any("message/codex_tail" in line and "working" in line for line in raw_tail)
+    events = app.events.store.recent(5)
+    assert any(event.type == "codex.interactive.tail_buffered" for event in events)
+
+
+def test_append_codex_tail_to_ring_buffer_is_idempotent(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    _append_codex_tail_to_ring_buffer(app, sid, "codexsess_test", "latest terminal cache")
+    _append_codex_tail_to_ring_buffer(app, sid, "codexsess_test", "latest terminal cache")
+    lines = app.sessions.raw_tail_lines(sid, limit=10, max_chars=200)
+    assert sum("message/codex_tail" in line and "latest terminal cache" in line for line in lines) == 1
 
 
 def test_build_bootstrap_prompt_includes_bounded_recent_tail(tmp_path) -> None:
@@ -114,3 +125,18 @@ def test_should_inject_bootstrap_only_without_explicit_prompt_or_subcommand() ->
     assert not should_inject_bootstrap(["continue this exact prompt"])
     assert not should_inject_bootstrap(["exec", "echo hi"])
     assert not should_inject_bootstrap(["resume", "--last"])
+
+
+def test_codex_close_enqueues_memory_maintenance(tmp_path) -> None:
+    from advanced_agent.codex_interactive import _enqueue_codex_close_maintenance, _record_codex_close_event
+    from advanced_agent.runtime.app import RuntimeApp
+
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.create_session("codex-close")
+    log_path = tmp_path / "codex.log"
+    _record_codex_close_event(app, sid, "codexsess_test", log_path, 0)
+    _enqueue_codex_close_maintenance(app, sid, "codexsess_test", log_path, 0)
+    events = app.events.store.recent(5)
+    assert any(event.type == "codex.interactive.closed" for event in events)
+    due = app.hooks.due(app.time.wall_ms(), limit=5)
+    assert any(hook.kind == "memory_maintenance" and hook.payload["codex_session_id"] == "codexsess_test" for hook in due)

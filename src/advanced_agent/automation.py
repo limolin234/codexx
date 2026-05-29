@@ -6,6 +6,7 @@ from advanced_agent.events import EventBus
 from advanced_agent.hooks import HookKind, HookScheduler, HookSpec
 from advanced_agent.compaction import ConversationCompactor
 from advanced_agent.memory_indexer import MemoryCandidate, MemoryIndexer
+from advanced_agent.memory_maintenance import MemoryMaintenanceWorker
 from advanced_agent.preferences import PreferenceWorker
 from advanced_agent.stores.hook_store import HookStore
 from advanced_agent.task_summary_worker import TaskSummaryWorker
@@ -25,7 +26,7 @@ class AutomationEngine:
     engine owns the actual scheduling and triggering.
     """
 
-    def __init__(self, hooks: HookStore, preferences: PreferenceWorker, events: EventBus, time: TimeService, compactor: ConversationCompactor | None = None, memory_indexer: MemoryIndexer | None = None, task_summary_worker: TaskSummaryWorker | None = None) -> None:
+    def __init__(self, hooks: HookStore, preferences: PreferenceWorker, events: EventBus, time: TimeService, compactor: ConversationCompactor | None = None, memory_indexer: MemoryIndexer | None = None, task_summary_worker: TaskSummaryWorker | None = None, memory_maintenance: MemoryMaintenanceWorker | None = None) -> None:
         self.hooks = hooks
         self.preferences = preferences
         self.events = events
@@ -33,6 +34,7 @@ class AutomationEngine:
         self.compactor = compactor
         self.memory_indexer = memory_indexer
         self.task_summary_worker = task_summary_worker
+        self.memory_maintenance = memory_maintenance
         self.backoff = HookScheduler(time)
 
     def ensure_session_maintenance(self, session_id: str, scope: str = "project:advanced_agent", idle_ms: int = 0) -> str:
@@ -47,6 +49,13 @@ class AutomationEngine:
         )
         self.hooks.ensure_unique(
             HookKind.COMPACT_MEMORY,
+            target=f"session:{session_id}",
+            now_ms=now,
+            delay_ms=delay,
+            payload={"session_id": session_id, "scope": scope},
+        )
+        self.hooks.ensure_unique(
+            HookKind.MEMORY_MAINTENANCE,
             target=f"session:{session_id}",
             now_ms=now,
             delay_ms=delay,
@@ -106,6 +115,28 @@ class AutomationEngine:
                 return "compact_skipped_missing_session"
             result = self.compactor.maybe_compact(session_id, scope=scope)
             return f"compact:{result.reason}:{result.compacted_messages}"
+        if hook.kind == HookKind.MEMORY_MAINTENANCE:
+            if self.memory_maintenance is None:
+                return "memory_maintenance_not_configured"
+            result = self.memory_maintenance.run(
+                session_id=hook.payload.get("session_id"),
+                scope=hook.payload.get("scope", "project:advanced_agent"),
+                raw_retention_ms=int(hook.payload.get("raw_retention_ms", 7 * 24 * 60 * 60 * 1000)),
+                deleted_retention_ms=int(hook.payload.get("deleted_retention_ms", 30 * 24 * 60 * 60 * 1000)),
+                archive_grace_ms=int(hook.payload.get("archive_grace_ms", 0)),
+                limit=int(hook.payload.get("limit", 200)),
+            )
+            return f"memory_maintenance:profile={result.profile_id or '-'}:archived={result.archived_indexes}:purged={result.purged_deleted}:pruned={result.pruned_raw_rows}"
+        if hook.kind == HookKind.RAW_RETENTION:
+            if self.memory_maintenance is None:
+                return "raw_retention_not_configured"
+            result = self.memory_maintenance.run(
+                session_id=hook.payload.get("session_id"),
+                scope=hook.payload.get("scope", "project:advanced_agent"),
+                raw_retention_ms=int(hook.payload.get("raw_retention_ms", 7 * 24 * 60 * 60 * 1000)),
+                limit=int(hook.payload.get("limit", 200)),
+            )
+            return f"raw_retention:pruned={result.pruned_raw_rows}"
         # External plugin hook. The core publishes the request and lets a
         # plugin-specific agent/worker decide what to read/write.
         if isinstance(hook.kind, str) and hook.kind.startswith("plugin."):

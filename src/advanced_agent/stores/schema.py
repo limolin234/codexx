@@ -264,7 +264,16 @@ CREATE TABLE IF NOT EXISTS memory_items (
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
   expires_at_ms INTEGER,
-  source_ref TEXT
+  source_ref TEXT,
+  source_strength TEXT NOT NULL DEFAULT 'unknown',
+  stability TEXT NOT NULL DEFAULT 'normal',
+  usage_count INTEGER NOT NULL DEFAULT 0,
+  last_used_at_ms INTEGER,
+  last_evidence_at_ms INTEGER,
+  supersedes_id TEXT,
+  superseded_by TEXT,
+  archived_at_ms INTEGER,
+  metadata_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memory_vectors (

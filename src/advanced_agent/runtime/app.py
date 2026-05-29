@@ -21,10 +21,13 @@ from advanced_agent.config import RuntimeConfig
 from advanced_agent.llm import ModelRouter
 from advanced_agent.memory_indexer import MemoryCandidate, MemoryIndexer
 from advanced_agent.memory_alignment import LLMMemoryAlignment
+from advanced_agent.major_memory_writer import MajorModelMemoryWriter
 from advanced_agent.memory_service import MemoryService
+from advanced_agent.memory_maintenance import MemoryMaintenanceWorker
 from advanced_agent.models import Message, new_id
 from advanced_agent.processes import AsyncSubprocessRunner
 from advanced_agent.preferences import PreferenceWorker
+from advanced_agent.profile_model import LLMProfileMaintainer
 from advanced_agent.prompt_builder import PromptBuilder
 from advanced_agent.stores.audit_store import AuditStore, ControlStore
 from advanced_agent.stores.hook_store import HookStore
@@ -67,6 +70,7 @@ class RuntimeApp:
     hooks: HookStore
     automation: AutomationEngine
     task_summary_worker: TaskSummaryWorker
+    memory_maintenance: MemoryMaintenanceWorker
     process_runner: AsyncSubprocessRunner
     codex_worker: CodexTaskWorker
     events: EventBus
@@ -118,11 +122,14 @@ class RuntimeApp:
         prompt_builder = PromptBuilder(context_builder, overlays, capabilities=capabilities)
         interactive = InteractiveAgent(sessions, time, model=router.client_for("interactive_model"), prompt_builder=prompt_builder)
         main = MainAgent(sessions, supervisor, time, decisions=decisions, model=router.client_for("main_model"), prompt_builder=prompt_builder, capability_executor=capability_executor)
-        preferences = PreferenceWorker(sessions, profiles, overlays, time)
+        profile_maintainer = LLMProfileMaintainer(router.client_for("memory_model"))
+        major_memory_writer = MajorModelMemoryWriter(router.client_for("memory_write_model") or router.client_for("main_model"))
+        preferences = PreferenceWorker(sessions, profiles, overlays, time, memory=memory, maintainer=profile_maintainer, major_writer=major_memory_writer)
         compactor = ConversationCompactor(sessions, vectors, alignment, time, memory_indexer=memory_indexer)
         task_summary_worker = TaskSummaryWorker(tasks, time)
-        automation = AutomationEngine(hooks, preferences, events, time, compactor=compactor, memory_indexer=memory_indexer, task_summary_worker=task_summary_worker)
-        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, interactive=interactive, main=main, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, decisions=decisions, profiles=profiles, overlays=overlays, preferences=preferences, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, workspace=workspace, background_requests={}, completed_background={})
+        memory_maintenance = MemoryMaintenanceWorker(sessions, memory, preferences, time)
+        automation = AutomationEngine(hooks, preferences, events, time, compactor=compactor, memory_indexer=memory_indexer, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance)
+        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, interactive=interactive, main=main, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, decisions=decisions, profiles=profiles, overlays=overlays, preferences=preferences, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, workspace=workspace, background_requests={}, completed_background={})
 
     def create_session(self, title: str) -> str:
         session_id = self.sessions.create_session(title=title, now_ms=self.time.wall_ms())

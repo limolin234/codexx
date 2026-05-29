@@ -64,8 +64,9 @@ bash scripts/install_user.sh --no-deps
 ```
 
 The wrapper then injects the local MCP server into Codex with temporary `-c`
-overrides. Codex gets `context_get`, `memory_write`, `memory_search`, and related
-runtime tools automatically.
+overrides. Codex gets a small model-facing tool set: `context_get`,
+`memory_write`, `session_raw_tail`, and `project_info`. Low-level memory search
+and recent helpers remain internal behind `context_get`.
 
 ## Runtime instruction layering
 
@@ -102,7 +103,7 @@ The intended first-turn behavior is recall-on-demand:
   preferences, and prior decisions are injected only when needed;
 - raw prior dialogue is retrieved through `session_raw_tail` or `context_get`,
   instead of being pushed at startup;
-- `memory_search` remains available for explicit long-term vector lookup;
+- explicit long-term vector lookup also goes through `context_get`;
 - `memory_write` remains the durable path for decisions, preferences, progress,
   and handoffs.
 
@@ -142,7 +143,7 @@ durable project memory layer:
 
 - call `context_get` for previous-context/project-state questions; if setting
   `mode`, use only `supplement` or `full`;
-- call `memory_search` for explicit long-term memory lookup;
+- call `context_get` for explicit long-term memory lookup;
 - call `memory_write` for records, decisions, preferences, and handoffs;
 - if vector memory returns relevant records, use them instead of claiming that no
   previous context is visible.

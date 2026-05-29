@@ -43,4 +43,6 @@ class ContextBuilder:
                 break
             bounded_hits.append(hit)
             retrieved_total += len(text)
+        if self.memory is not None:
+            self.memory.mark_used([hit.memory_id for hit in bounded_hits])
         return BuiltContext(recent_messages=recent, retrieved_memories=bounded_hits, total_chars=total + retrieved_total)

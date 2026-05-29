@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from advanced_agent.stores.schema import SCHEMA_SQL
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 @dataclass(slots=True)
@@ -43,6 +43,8 @@ class MigrationRunner:
                 self._migrate_to_v3()
             if current < 4:
                 self._migrate_to_v4()
+            if current < 5:
+                self._migrate_to_v5()
             self._set_version(CURRENT_SCHEMA_VERSION)
             upgraded = True
             current = CURRENT_SCHEMA_VERSION
@@ -176,6 +178,29 @@ class MigrationRunner:
         if self._table_exists("memory_fts"):
             self.conn.execute("DELETE FROM memory_fts")
             self._backfill_memory_fts()
+
+    def _migrate_to_v5(self) -> None:
+        """Add memory lifecycle metadata for profile maintenance and cleanup."""
+
+        if not self._table_exists("memory_items"):
+            return
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(memory_items)").fetchall()}
+        additions = {
+            "source_strength": "TEXT NOT NULL DEFAULT 'unknown'",
+            "stability": "TEXT NOT NULL DEFAULT 'normal'",
+            "usage_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_used_at_ms": "INTEGER",
+            "last_evidence_at_ms": "INTEGER",
+            "supersedes_id": "TEXT",
+            "superseded_by": "TEXT",
+            "archived_at_ms": "INTEGER",
+            "metadata_json": "TEXT",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE memory_items ADD COLUMN {name} {definition}")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_status_updated ON memory_items(status, updated_at_ms)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_superseded_by ON memory_items(superseded_by)")
 
     def _merge_text(self, left: str | None, right: str | None) -> str:
         parts = []

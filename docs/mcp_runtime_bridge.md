@@ -3,7 +3,7 @@
 ## MCP vs toolcall
 
 - **Toolcall** is the model-facing action format. The model emits a structured
-  call such as `memory_search({query: ...})`.
+  call such as `context_get({query: ...})`.
 - **MCP** is a tool-provider protocol. An MCP server exposes tools/resources;
   a client such as Codex can discover those tools and convert them into the
   model's tool schemas.
@@ -22,19 +22,21 @@ Advanced Agent should be a local project-level MCP/tool provider, not a global
 skill. Codex remains the coding agent; Advanced Agent provides long-lived memory,
 session, task, hook, and event state.
 
-## First project-level tools
+## Project-level tool layers
 
-- `memory.search`
-- `memory.write`
-- `memory.recent`
-- `context.get`
-- `session.recent`
-- `task.list`
-- `task.state`
-- `task.tail`
-- `project.info`
-- `timer.schedule`
-- `event.wait`
+Model-facing MCP exposure is intentionally small:
+
+- `context.get` / `context_get` for context lookup, semantic memory search, and
+  recent-memory recaps
+- `memory.write` / `memory_write` for durable memory writes
+- `session.raw_tail` / `session_raw_tail` for bounded raw overflow inspection
+- `project.info` / `project_info` for cwd/project-root inspection
+
+Internal runtime tools still include lower-level `memory.search` and
+`memory.recent` for agents/tests/automation. `context.get` routes to them:
+query-based calls use semantic vector retrieval, while empty-query recent reads
+use active durable records ordered newest-first by `updated_at_ms DESC`, then
+`created_at_ms DESC`, then `rowid DESC` for same-millisecond ties.
 
 ## Timer and wait semantics
 
@@ -90,11 +92,12 @@ annotations, so clients that honor annotations can auto-approve `memory_write`
 style note/decision/handoff records without treating them like filesystem or
 process mutations.
 
-To avoid overlap with Codex's own live context and reduce token waste, default
-supplement retrieval excludes `codex_interactive_log` memories. Those logs are
-kept for audit/debug recovery, but they are noisy and often duplicate what Codex
-already saw. Callers can opt in with `include_log_memories=true` when debugging
-the wrapper itself.
+To avoid overlap with Codex's own live context and reduce token waste, raw
+Codex terminal transcripts are not persisted as durable memory by default. Use
+`session_raw_tail` for bounded short-term raw inspection; use handoff/decision/
+verification memories for durable semantics. Legacy `codex_interactive_log`
+records are excluded from default supplement retrieval and are purged by memory
+maintenance.
 
 This avoids relying only on vague prompts like "remember to search memory", while
 still keeping MCP compatible with normal toolcall flow and reducing duplicate
@@ -119,6 +122,6 @@ codex mcp add advanced-agent --env PYTHONPATH=src -- \
   --config .env.json
 ```
 
-`memory.write`, `memory.search`, and `context.get` now go through
+`memory.write`, internal `memory.search`, and `context.get` now go through
 `MemoryService`/`MemoryIndexer`, so records are actually inserted into SQLite,
 tagged/aligned, vector-indexed by sqlite-vec, and hydrated back to tool callers.

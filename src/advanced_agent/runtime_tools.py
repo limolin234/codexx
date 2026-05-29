@@ -21,6 +21,8 @@ class RuntimeToolRisk(StrEnum):
 SAFE_MCP_AUTO_APPROVE_TOOLS: dict[str, RuntimeToolRisk] = {
     "memory.search": RuntimeToolRisk.SAFE_READ,
     "memory.recent": RuntimeToolRisk.SAFE_READ,
+    "memory.archive_inactive_indexes": RuntimeToolRisk.SAFE_DB_WRITE,
+    "memory.purge_deleted": RuntimeToolRisk.SAFE_DB_WRITE,
     "context.get": RuntimeToolRisk.SAFE_READ,
     "session.recent": RuntimeToolRisk.SAFE_READ,
     "session.raw_tail": RuntimeToolRisk.SAFE_READ,
@@ -84,6 +86,7 @@ class RuntimeToolBridge:
             include_content = bool(args.get("include_content", True))
             content_max_chars = int(args.get("content_max_chars", 2000))
             hit_dicts = [hit.to_dict(include_content=include_content, content_max_chars=content_max_chars) for hit in hits]
+            self.app.memory.mark_used([hit.memory_id for hit in hits])
             return {"ok": True, "hits": hit_dicts, "data": {"hits": hit_dicts}}
         if name == "memory.write":
             indexed = self.app.memory.write(
@@ -95,12 +98,29 @@ class RuntimeToolBridge:
                 source_id=args.get("source_id", args["summary"][:80]),
                 importance=float(args.get("importance", 0.5)),
                 confidence=float(args.get("confidence", 0.8)),
+                source_strength=args.get("source_strength", "unknown"),
+                stability=args.get("stability", "normal"),
+                last_evidence_at_ms=args.get("last_evidence_at_ms"),
+                supersedes_id=args.get("supersedes_id"),
+                metadata=args.get("metadata"),
                 agent_role=self.caller.value,
             )
             return {"ok": True, "memory_id": indexed.memory_id, "created": indexed.created, "reason": indexed.reason}
         if name == "memory.recent":
             records = self.app.memory.recent(scope=args.get("scope"), type=args.get("type"), limit=int(args.get("limit", 20)))
-            return {"ok": True, "memories": [record.to_dict(include_content=bool(args.get("include_content", True)), content_max_chars=int(args.get("content_max_chars", 2000))) for record in records]}
+            self.app.memory.mark_used([record.memory_id for record in records])
+            return {
+                "ok": True,
+                "order_by": ["updated_at_ms DESC", "created_at_ms DESC", "rowid DESC"],
+                "instruction": "Results are already newest-first; do not manually sort for ordinary recent-activity recaps.",
+                "memories": [record.to_dict(include_content=bool(args.get("include_content", True)), content_max_chars=int(args.get("content_max_chars", 2000))) for record in records],
+            }
+        if name == "memory.archive_inactive_indexes":
+            archived = self.app.memory.archive_inactive_indexes(older_than_ms=args.get("older_than_ms"), limit=int(args.get("limit", 100)))
+            return {"ok": True, "archived": archived}
+        if name == "memory.purge_deleted":
+            purged = self.app.memory.purge_deleted(older_than_ms=int(args["older_than_ms"]), limit=int(args.get("limit", 100)))
+            return {"ok": True, "purged": purged}
         if name == "session.recent":
             session_id = args.get("session_id") or self.app.default_session()
             limit = int(args.get("limit", 20))
@@ -144,6 +164,7 @@ class RuntimeToolBridge:
             fetch_k = max(memory_top_k * 4, memory_top_k)
             raw_memories = self.app.memory.search(query, scope=scope, top_k=fetch_k, query_profile=query_profile, facet_weights=facet_weights) if query else self.app.memory.recent(scope=scope, limit=fetch_k)
             memories = [memory for memory in raw_memories if memory.type not in exclude_types][:memory_top_k]
+            self.app.memory.mark_used([memory.memory_id for memory in memories])
             include_memory_content = bool(args.get("include_memory_content", mode == "full"))
             memory_content_max_chars = int(args.get("memory_content_max_chars", 1200 if mode == "full" else 600))
             return {
@@ -212,8 +233,10 @@ _TOOL_SPECS = tuple(
     for name, description in (
         ("memory.search", "Search aligned vector memory."),
         ("memory.write", "Write an aligned memory candidate through MemoryIndexer."),
-        ("memory.recent", "Read recent durable memory records, useful when the query is vague."),
-        ("context.get", "Get fused recent session context plus vector memory hits for a query."),
+        ("memory.recent", "Read durable memory records sorted newest-first by updated_at_ms, created_at_ms, then rowid."),
+        ("memory.archive_inactive_indexes", "Archive inactive/superseded/deleted memory indexes while retaining item tombstones."),
+        ("memory.purge_deleted", "Physically purge deleted memory tombstones older than a cutoff."),
+        ("context.get", "Get supplemental prior session context plus vector memory hits for a query."),
         ("session.recent", "Read recent user-visible session context lines."),
         ("session.raw_tail", "Read bounded raw dialogue tail as a ring-buffer-like overflow guard."),
         ("task.list", "List recent managed tasks."),

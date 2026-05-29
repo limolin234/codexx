@@ -63,9 +63,14 @@ user/session/task content
 
 ## Query profiles and raw tail
 
-- `memory.search` and `context_get` accept `query_profile` and optional facet
-  weight overrides. The sqlite-vec adapter overfetches and reranks by facet
-  weight; the logical interface is compatible with a future named-vector backend.
+- Internal `memory.search` and model-facing `context_get` accept `query_profile`
+  and optional facet weight overrides. The sqlite-vec adapter overfetches and
+  reranks by facet weight; the logical interface is compatible with a future
+  named-vector backend.
+- Recent-memory retrieval is chronological, not semantic: internally it returns
+  active durable records ordered by `updated_at_ms DESC, created_at_ms DESC,
+  rowid DESC`. Codex gets this through `context_get` with an empty/vague query.
+  Callers should not add manual sorting for ordinary "recent activity" recaps.
 - `session.raw_tail` / `session_raw_tail` exposes a bounded raw dialogue tail for
   overflow inspection. It behaves like a ring-buffer view over raw session rows:
   callers choose `limit` and `max_chars`, and the model can call it when recent

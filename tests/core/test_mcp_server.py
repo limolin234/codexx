@@ -7,36 +7,18 @@ from advanced_agent.mcp_server import create_mcp
 async def test_mcp_exposes_memory_toolcall_roundtrip(tmp_path) -> None:
     mcp = create_mcp(tmp_path / "state.sqlite", None)
     tool_names = {tool.name for tool in await mcp.list_tools()}
-    assert {"memory.write", "memory.search", "context.get", "session.recent"}.issubset(tool_names)
-    assert {"memory_write", "memory_search", "context_get", "session_recent"}.issubset(tool_names)
+    assert {"memory.write", "context.get", "session.raw_tail", "project.info"}.issubset(tool_names)
+    assert {"memory_write", "context_get", "session_raw_tail", "project_info"}.issubset(tool_names)
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     auto_approved = {
         "context.get",
         "context_get",
-        "memory.search",
-        "memory_search",
         "memory.write",
         "memory_write",
-        "memory.recent",
-        "memory_recent",
-        "session.recent",
-        "session_recent",
         "session.raw_tail",
         "session_raw_tail",
         "project.info",
         "project_info",
-        "workdir.chdir",
-        "workdir_chdir",
-        "task.list",
-        "task_list",
-        "task.state",
-        "task_state",
-        "task.tail",
-        "task_tail",
-        "timer.schedule",
-        "timer_schedule",
-        "event.wait",
-        "event_wait",
     }
     for name in auto_approved:
         assert tools[name].annotations.destructiveHint is False
@@ -44,10 +26,23 @@ async def test_mcp_exposes_memory_toolcall_roundtrip(tmp_path) -> None:
     assert tools["memory.write"].annotations.destructiveHint is False
     assert tools["memory.write"].annotations.readOnlyHint is False
     assert tools["memory.write"].annotations.idempotentHint is True
-    assert tools["memory.search"].annotations.readOnlyHint is True
-    assert tools["workdir.chdir"].annotations.readOnlyHint is False
     assert tools["context_get"].inputSchema["properties"]["mode"]["enum"] == ["supplement", "full"]
-
+    hidden_tools = {
+        "memory_archive_inactive_indexes",
+        "memory_purge_deleted",
+        "session_recent",
+        "memory_search",
+        "memory.search",
+        "memory_recent",
+        "memory.recent",
+        "workdir_chdir",
+        "task_list",
+        "task_state",
+        "task_tail",
+        "timer_schedule",
+        "event_wait",
+    }
+    assert hidden_tools.isdisjoint(tool_names)
     _, write_data = await mcp.call_tool(
         "memory.write",
         {
@@ -59,13 +54,23 @@ async def test_mcp_exposes_memory_toolcall_roundtrip(tmp_path) -> None:
     )
     assert write_data["ok"] and write_data["created"]
 
-    _, search_data = await mcp.call_tool("memory.search", {"query": "toolcall previous conversation", "scope": "project:mcp-test"})
-    assert search_data["ok"]
-    assert search_data["hits"]
-    assert "write memory" in search_data["hits"][0]["content"]
+    _, ctx_data = await mcp.call_tool("context_get", {"query": "toolcall previous conversation", "scope": "project:mcp-test", "include_memory_content": True})
+    assert ctx_data["ok"]
+    assert ctx_data["memories"]
+    assert "write memory" in ctx_data["memories"][0]["content"]
 
-    _, alias_data = await mcp.call_tool("memory_search", {"query": "toolcall previous conversation", "scope": "project:mcp-test"})
-    assert alias_data["ok"] and alias_data["hits"]
+    _, recent_ctx = await mcp.call_tool("context_get", {"query": "", "scope": "project:mcp-test", "memory_top_k": 1})
+    assert recent_ctx["ok"]
+    assert recent_ctx["memories"][0]["summary"] == "MCP toolcall can store previous conversation records"
+
+    assert set(tools["memory_write"].inputSchema["properties"]) == {
+        "summary",
+        "content",
+        "scope",
+        "type",
+        "importance",
+        "confidence",
+    }
 
 
 @pytest.mark.anyio
@@ -91,6 +96,6 @@ async def test_mcp_multiple_server_instances_share_db_safely(tmp_path) -> None:
         )
         assert data["ok"]
 
-    _, search_data = await mcp_b.call_tool("memory.search", {"query": "concurrent terminal", "scope": "project:multi-mcp", "top_k": 12})
+    _, search_data = await mcp_b.call_tool("context_get", {"query": "concurrent terminal", "scope": "project:multi-mcp", "memory_top_k": 12})
     assert search_data["ok"]
-    assert len(search_data["hits"]) >= 6
+    assert len(search_data["memories"]) >= 6

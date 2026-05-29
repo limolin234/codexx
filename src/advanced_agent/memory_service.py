@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,16 @@ class MemoryRecord:
     source_ref: str | None
     created_at_ms: int
     updated_at_ms: int
+    status: str = "active"
+    source_strength: str = "unknown"
+    stability: str = "normal"
+    usage_count: int = 0
+    last_used_at_ms: int | None = None
+    last_evidence_at_ms: int | None = None
+    supersedes_id: str | None = None
+    superseded_by: str | None = None
+    archived_at_ms: int | None = None
+    metadata: dict[str, Any] | None = None
     label_kind: str | None = None
     labels: dict[str, str] | None = None
     distance: float | None = None
@@ -36,7 +47,18 @@ class MemoryRecord:
             "source_ref": self.source_ref,
             "created_at_ms": self.created_at_ms,
             "updated_at_ms": self.updated_at_ms,
+            "status": self.status,
+            "source_strength": self.source_strength,
+            "stability": self.stability,
+            "usage_count": self.usage_count,
+            "last_used_at_ms": self.last_used_at_ms,
+            "last_evidence_at_ms": self.last_evidence_at_ms,
+            "supersedes_id": self.supersedes_id,
+            "superseded_by": self.superseded_by,
+            "archived_at_ms": self.archived_at_ms,
         }
+        if self.metadata:
+            data["metadata"] = self.metadata
         if self.label_kind is not None:
             data["label_kind"] = self.label_kind
         if self.labels:
@@ -77,6 +99,11 @@ class MemoryService:
         source_id: str | None = None,
         importance: float = 0.5,
         confidence: float = 0.8,
+        source_strength: str = "unknown",
+        stability: str = "normal",
+        last_evidence_at_ms: int | None = None,
+        supersedes_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
         agent_role: str = "main",
     ) -> MemoryIndexResult:
         candidate = MemoryCandidate(
@@ -88,6 +115,11 @@ class MemoryService:
             source_id=source_id or summary[:80],
             importance=importance,
             confidence=confidence,
+            source_strength=source_strength,
+            stability=stability,
+            last_evidence_at_ms=last_evidence_at_ms,
+            supersedes_id=supersedes_id,
+            metadata=metadata or {},
         )
         return self.indexer.index(candidate, agent_role=agent_role)
 
@@ -124,17 +156,97 @@ class MemoryService:
         rows = self.vectors.db.query_all(
             f"""SELECT * FROM memory_items
             WHERE {' AND '.join(where)}
-            ORDER BY updated_at_ms DESC, created_at_ms DESC
+            ORDER BY updated_at_ms DESC, created_at_ms DESC, rowid DESC
             LIMIT ?""",
             tuple(params),
         )
         return [self._record_from_row(row) for row in rows]
 
-    def get(self, memory_id: str) -> MemoryRecord | None:
-        row = self.vectors.db.query_one("SELECT * FROM memory_items WHERE id=? AND status='active'", (memory_id,))
+    def get(self, memory_id: str, include_inactive: bool = False) -> MemoryRecord | None:
+        if include_inactive:
+            row = self.vectors.db.query_one("SELECT * FROM memory_items WHERE id=?", (memory_id,))
+        else:
+            row = self.vectors.db.query_one("SELECT * FROM memory_items WHERE id=? AND status='active'", (memory_id,))
         if row is None:
             return None
         return self._record_from_row(row)
+
+    def deactivate(self, memory_id: str, *, status: str = "inactive", superseded_by: str | None = None, now_ms: int | None = None) -> bool:
+        if status not in {"inactive", "superseded", "archived", "deleted"}:
+            raise ValueError("memory status must be inactive, superseded, archived, or deleted")
+        now = now_ms if now_ms is not None else self.indexer.time.wall_ms()
+        cur = self.vectors.db.execute(
+            "UPDATE memory_items SET status=?, superseded_by=COALESCE(?, superseded_by), updated_at_ms=? WHERE id=? AND status='active'",
+            (status, superseded_by, now, memory_id),
+        )
+        return cur.rowcount > 0
+
+    def mark_used(self, memory_ids: list[str], *, now_ms: int | None = None) -> int:
+        if not memory_ids:
+            return 0
+        now = now_ms if now_ms is not None else self.indexer.time.wall_ms()
+        placeholders = ",".join("?" for _ in memory_ids)
+        cur = self.vectors.db.execute(
+            f"UPDATE memory_items SET usage_count=usage_count+1, last_used_at_ms=?, updated_at_ms=? WHERE id IN ({placeholders}) AND status='active'",
+            (now, now, *memory_ids),
+        )
+        return cur.rowcount
+
+    def archive_inactive_indexes(self, *, older_than_ms: int | None = None, limit: int = 100) -> int:
+        """Remove vector/FTS/facet rows for inactive memories, retaining item tombstones."""
+
+        where = ["status IN ('inactive','superseded','deleted')", "archived_at_ms IS NULL"]
+        params: list[Any] = []
+        if older_than_ms is not None:
+            where.append("updated_at_ms<?")
+            params.append(older_than_ms)
+        params.append(limit)
+        rows = self.vectors.db.query_all(
+            f"SELECT id FROM memory_items WHERE {' AND '.join(where)} ORDER BY updated_at_ms LIMIT ?",
+            tuple(params),
+        )
+        now = self.indexer.time.wall_ms()
+        archived = 0
+        with self.vectors.db.transaction():
+            for row in rows:
+                memory_id = row["id"]
+                self.vectors.delete_memory_indexes(memory_id)
+                self.vectors.db.execute(
+                    "UPDATE memory_items SET status='archived', archived_at_ms=?, updated_at_ms=? WHERE id=?",
+                    (now, now, memory_id),
+                )
+                archived += 1
+        return archived
+
+    def purge_deleted(self, *, older_than_ms: int, limit: int = 100) -> int:
+        rows = self.vectors.db.query_all(
+            "SELECT id FROM memory_items WHERE status='deleted' AND updated_at_ms<? ORDER BY updated_at_ms LIMIT ?",
+            (older_than_ms, limit),
+        )
+        purged = 0
+        with self.vectors.db.transaction():
+            for row in rows:
+                memory_id = row["id"]
+                self.vectors.delete_memory_indexes(memory_id)
+                self.vectors.db.execute("DELETE FROM memory_items WHERE id=?", (memory_id,))
+                purged += 1
+        return purged
+
+    def purge_type(self, type: str, *, limit: int = 100) -> int:
+        """Physically remove memories of a deprecated type and their indexes."""
+
+        rows = self.vectors.db.query_all(
+            "SELECT id FROM memory_items WHERE type=? ORDER BY updated_at_ms LIMIT ?",
+            (type, limit),
+        )
+        purged = 0
+        with self.vectors.db.transaction():
+            for row in rows:
+                memory_id = row["id"]
+                self.vectors.delete_memory_indexes(memory_id)
+                self.vectors.db.execute("DELETE FROM memory_items WHERE id=?", (memory_id,))
+                purged += 1
+        return purged
 
     def _record_from_row(self, row: Any) -> MemoryRecord:
         return MemoryRecord(
@@ -148,6 +260,16 @@ class MemoryService:
             source_ref=row["source_ref"],
             created_at_ms=int(row["created_at_ms"]),
             updated_at_ms=int(row["updated_at_ms"]),
+            status=row["status"],
+            source_strength=row["source_strength"] if "source_strength" in row.keys() else "unknown",
+            stability=row["stability"] if "stability" in row.keys() else "normal",
+            usage_count=int(row["usage_count"]) if "usage_count" in row.keys() else 0,
+            last_used_at_ms=int(row["last_used_at_ms"]) if "last_used_at_ms" in row.keys() and row["last_used_at_ms"] is not None else None,
+            last_evidence_at_ms=int(row["last_evidence_at_ms"]) if "last_evidence_at_ms" in row.keys() and row["last_evidence_at_ms"] is not None else None,
+            supersedes_id=row["supersedes_id"] if "supersedes_id" in row.keys() else None,
+            superseded_by=row["superseded_by"] if "superseded_by" in row.keys() else None,
+            archived_at_ms=int(row["archived_at_ms"]) if "archived_at_ms" in row.keys() and row["archived_at_ms"] is not None else None,
+            metadata=json.loads(row["metadata_json"]) if "metadata_json" in row.keys() and row["metadata_json"] else None,
             labels=self._labels_for_memory(row["id"]),
         )
 

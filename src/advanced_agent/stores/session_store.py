@@ -215,6 +215,28 @@ class SessionStore:
         self.db.execute("UPDATE sessions SET updated_at_ms=? WHERE id=?", (cutoff_ms, session_id))
         return len(rows)
 
+    def prune_compacted_before_ms(self, session_id: str, cutoff_ms: int, limit: int = 500) -> int:
+        """Physically delete old compacted raw rows after durable summaries exist."""
+
+        message_rows = self.db.query_all(
+            "SELECT id, request_id FROM messages WHERE session_id=? AND compacted=1 AND pinned=0 AND created_at_ms<? ORDER BY created_at_ms LIMIT ?",
+            (session_id, cutoff_ms, limit),
+        )
+        if not message_rows:
+            return 0
+        message_ids = [row["id"] for row in message_rows]
+        request_ids = [row["request_id"] for row in message_rows if row["request_id"]]
+        with self.db.transaction():
+            if request_ids:
+                placeholders = ",".join("?" for _ in request_ids)
+                self.db.execute(
+                    f"DELETE FROM interaction_streams WHERE session_id=? AND request_id IN ({placeholders})",
+                    (session_id, *request_ids),
+                )
+            placeholders = ",".join("?" for _ in message_ids)
+            self.db.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", tuple(message_ids))
+        return len(message_ids)
+
 
     def raw_tail_lines(self, session_id: str, limit: int = 80, max_chars: int = 800, include_compacted: bool = True) -> list[str]:
         """Return a bounded ring-buffer-like tail of raw dialogue rows.

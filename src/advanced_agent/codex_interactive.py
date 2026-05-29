@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from advanced_agent import defaults
-from advanced_agent.memory_indexer import MemoryCandidate
+from advanced_agent.hooks import HookKind
 from advanced_agent.runtime.app import RuntimeApp
-from advanced_agent.models import new_id
+from advanced_agent.models import Message, new_id
 
 
 @dataclass(slots=True)
@@ -38,9 +38,9 @@ CODEXX_RUNTIME_INSTRUCTIONS_FALLBACK = """# codexx runtime instructions
 
 You are running under the `codexx` wrapper. Keep the user's current working
 directory instructions separate from Advanced Agent wrapper/runtime behavior.
-Use Advanced Agent MCP tools (`context_get`, `memory_search`, `memory_write`,
-`session_raw_tail`, `project_info`, `workdir_chdir`) as the durable memory and
-runtime layer. On the first non-trivial request, call `context_get` before
+Use Advanced Agent MCP tools (`context_get`, `memory_write`,
+`session_raw_tail`, `project_info`) as the durable memory and runtime layer.
+On the first non-trivial request, call `context_get` before
 answering. Do not treat Codex-side MEMORY.md files as the primary Advanced Agent
 memory source unless the user explicitly asks to audit or migrate them.
 """
@@ -72,7 +72,7 @@ def build_codex_env(app: RuntimeApp, session_id: str, db_path: str, log_path: Pa
         "ADVANCED_AGENT_LAUNCH_CWD": str(Path.cwd()),
         "ADVANCED_AGENT_SCOPE": defaults.default_scope(),
         "ADVANCED_AGENT_MEMORY_TRUST": "high",
-        "ADVANCED_AGENT_MCP_HINT": "Use context_get/memory_search before denying previous context; use memory_write for records and handoffs.",
+        "ADVANCED_AGENT_MCP_HINT": "Use context_get before denying previous context; use memory_write for records and handoffs.",
     })
     return env
 
@@ -210,7 +210,7 @@ def build_bootstrap_prompt(app: RuntimeApp, session_id: str, max_chars: int = 12
         excerpt,
         "```",
         "",
-        "Continue interactively. If the user says to continue previous work, first use this excerpt; then call context_get/session_raw_tail/memory_search as needed.",
+        "Continue interactively. If the user says to continue previous work, first use this excerpt; then call context_get/session_raw_tail as needed.",
     ])
 
 
@@ -297,7 +297,9 @@ def run_interactive_codex(
         codex_args = [*codex_args, build_bootstrap_prompt(app, session_id, max_chars=bootstrap_chars)]
     command = ["codex", *instruction_args, *injected_args, *codex_args]
     returncode = _run_pty(command, build_codex_env(app, session_id, db_path, log_path, project_root_path), log_path, child_cwd_callback=lambda cwd: app.chdir(str(cwd)))
-    _ingest_codex_log_tail(app, session_id, codex_session_id, log_path)
+    _record_codex_close_event(app, session_id, codex_session_id, log_path, returncode)
+    _append_codex_log_tail_to_ring_buffer(app, session_id, codex_session_id, log_path)
+    _enqueue_codex_close_maintenance(app, session_id, codex_session_id, log_path, returncode)
     return CodexInteractiveSession(session_id=session_id, codex_session_id=codex_session_id, log_path=log_path, returncode=returncode)
 
 
@@ -428,6 +430,32 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
         return
 
 
+def _record_codex_close_event(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, returncode: int) -> None:
+    app.events.publish(
+        "codex.interactive.closed",
+        "codex_wrapper",
+        {
+            "session_id": session_id,
+            "codex_session_id": codex_session_id,
+            "log_path": str(log_path),
+            "returncode": returncode,
+        },
+    )
+
+
+def _enqueue_codex_close_maintenance(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, returncode: int) -> None:
+    now = app.time.wall_ms()
+    payload = {
+        "session_id": session_id,
+        "scope": defaults.default_scope(),
+        "codex_session_id": codex_session_id,
+        "log_path": str(log_path),
+        "returncode": returncode,
+        "source": "codex_wrapper_close",
+    }
+    app.hooks.schedule_in(HookKind.MEMORY_MAINTENANCE, target=f"codex:{codex_session_id}", now_ms=now, delay_ms=0, payload=payload)
+
+
 def _copy_winsize(src_fd: int, dst_fd: int) -> None:
     try:
         winsize = fcntl.ioctl(src_fd, termios.TIOCGWINSZ, b"\0" * 8)
@@ -442,8 +470,12 @@ ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x
 
 
 def _clean_terminal_log(text: str, max_chars: int = 6000) -> str:
-    cleaned = ANSI_RE.sub("", text)
+    cleaned = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", text)
+    cleaned = ANSI_RE.sub("", cleaned)
     cleaned = cleaned.replace("\r", "\n")
+    cleaned = re.sub(r"\n?\[USER_INPUT_BYTES\]\n?", "\n", cleaned)
+    cleaned = re.sub(r"(?:\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b.|\x0f|\x0e|\x07)", "", cleaned)
+    cleaned = re.sub(r"0;[⠇⠏⠋⠙⠹⠸⠼⠴⠦⠧] [^\n]{0,120}", "", cleaned)
     lines = []
     blank = False
     for line in cleaned.splitlines():
@@ -458,7 +490,15 @@ def _clean_terminal_log(text: str, max_chars: int = 6000) -> str:
     return "\n".join(lines)[-max_chars:]
 
 
-def _ingest_codex_log_tail(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, max_chars: int = 12_000) -> None:
+def _append_codex_log_tail_to_ring_buffer(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, max_chars: int = 120_000) -> None:
+    """Copy the cleaned terminal tail into the bounded raw session ring buffer.
+
+    Raw Codex terminal logs are diagnostic overflow data, not durable semantic
+    memory.  Keep the terminal file and session_raw_tail path for short-term
+    inspection, but do not index codex_interactive_log or raw-tail handoff
+    memory records on wrapper close.
+    """
+
     try:
         raw = log_path.read_bytes()[-max_chars:].decode("utf-8", errors="replace")
     except FileNotFoundError:
@@ -466,43 +506,31 @@ def _ingest_codex_log_tail(app: RuntimeApp, session_id: str, codex_session_id: s
     cleaned = _clean_terminal_log(raw)
     if not cleaned.strip():
         return
-    interrupted = "[WRAPPER_CTRL_C_INTERRUPTED]" in raw
-    summary_suffix = " interrupted and saved" if interrupted else " transcript tail"
-    candidate = MemoryCandidate(
-        scope="project:advanced_agent",
-        type="codex_interactive_log",
-        summary=f"Interactive Codex session {codex_session_id}{summary_suffix}",
-        content=cleaned,
-        source_type="codex_interactive",
-        source_id=codex_session_id,
-        importance=0.55 if interrupted else 0.4,
-        confidence=0.6,
-    )
-    app.memory_indexer.index(candidate, agent_role="codex")
-    _ingest_session_raw_tail_handoff(app, session_id, codex_session_id)
-    app.events.publish("codex.interactive.logged", "codex_wrapper", {"session_id": session_id, "codex_session_id": codex_session_id, "log_path": str(log_path)})
+    _append_codex_tail_to_ring_buffer(app, session_id, codex_session_id, cleaned)
+    app.events.publish("codex.interactive.tail_buffered", "codex_wrapper", {"session_id": session_id, "codex_session_id": codex_session_id, "log_path": str(log_path)})
 
 
-def _ingest_session_raw_tail_handoff(app: RuntimeApp, session_id: str, codex_session_id: str, max_chars: int = 4000) -> None:
-    tail = "\n".join(app.sessions.raw_tail_lines(session_id, limit=30, max_chars=500, include_compacted=True)).strip()
+# Backward-compatible private alias for tests/extensions that imported the old
+# helper name.  It no longer writes durable memory.
+def _ingest_codex_log_tail(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, max_chars: int = 120_000) -> None:
+    _append_codex_log_tail_to_ring_buffer(app, session_id, codex_session_id, log_path, max_chars=max_chars)
+
+
+def _append_codex_tail_to_ring_buffer(app: RuntimeApp, session_id: str, codex_session_id: str, cleaned_tail: str, max_chars: int = 6000) -> None:
+    tail = cleaned_tail.strip()[-max_chars:]
     if not tail:
         return
-    candidate = MemoryCandidate(
-        scope=defaults.default_scope(),
-        type="handoff",
-        summary=f"Codex wrapper closing raw-tail handoff {codex_session_id}",
-        content=tail[-max_chars:],
-        source_type="codex_wrapper_raw_tail",
-        source_id=codex_session_id,
-        importance=0.65,
-        confidence=0.7,
-        facets={
-            "handoff": tail[-1200:],
-            "time": tail[-1200:],
-            "chat": tail[-1200:],
-        },
-    )
-    app.memory_indexer.index(candidate, agent_role="codex")
+    request_id = f"codex-close-{codex_session_id}"
+    existing = app.sessions.message_for_request(session_id, request_id, role="codex_tail")
+    if existing is not None:
+        return
+    app.sessions.append_message(Message(
+        session_id=session_id,
+        request_id=request_id,
+        role="codex_tail",
+        content=tail,
+        created_at_ms=app.time.wall_ms(),
+    ))
 
 
 def main() -> None:

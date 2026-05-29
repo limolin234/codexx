@@ -109,3 +109,38 @@ def test_migration_v3_to_v4_moves_project_facet_to_workstream(tmp_path) -> None:
     assert conn.execute("SELECT 1 FROM memory_facets WHERE facet_name='project'").fetchone() is None
     assert conn.execute("SELECT facet_text FROM memory_facets WHERE facet_name='workstream'").fetchone()[0] == "legacy project text"
     assert conn.execute("SELECT label_kind FROM memory_vectors WHERE id='vec1'").fetchone()[0] == "workstream"
+
+
+def test_migration_v4_to_v5_adds_memory_lifecycle_columns(tmp_path) -> None:
+    db = tmp_path / "v4.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO schema_meta(key,value) VALUES('schema_version','4')")
+    conn.execute(
+        """CREATE TABLE memory_items (
+        id TEXT PRIMARY KEY, scope TEXT NOT NULL, type TEXT NOT NULL, title TEXT,
+        summary TEXT NOT NULL, content TEXT, confidence REAL NOT NULL, importance REAL NOT NULL,
+        status TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER, source_ref TEXT
+        )"""
+    )
+    conn.commit()
+
+    status = MigrationRunner(conn).migrate()
+    assert status.current_version == CURRENT_SCHEMA_VERSION
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_items)")}
+    for name in {
+        "source_strength",
+        "stability",
+        "usage_count",
+        "last_used_at_ms",
+        "last_evidence_at_ms",
+        "supersedes_id",
+        "superseded_by",
+        "archived_at_ms",
+        "metadata_json",
+    }:
+        assert name in columns
+    indexes = {row[1] for row in conn.execute("PRAGMA index_list(memory_items)")}
+    assert "idx_memory_status_updated" in indexes
+    assert "idx_memory_superseded_by" in indexes
