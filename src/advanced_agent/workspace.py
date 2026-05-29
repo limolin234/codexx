@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import threading
 
@@ -20,9 +21,12 @@ class WorkspaceState:
     this state instead of the Python process cwd.
     """
 
-    def __init__(self, cwd: str | Path | None = None) -> None:
+    def __init__(self, cwd: str | Path | None = None, *, sync_process_cwd: bool = False) -> None:
         self._lock = threading.RLock()
+        self._sync_process_cwd = sync_process_cwd
         self._cwd = self._resolve(cwd or Path.cwd(), base=Path.cwd())
+        if self._sync_process_cwd:
+            os.chdir(self._cwd)
 
     @property
     def cwd(self) -> Path:
@@ -37,6 +41,8 @@ class WorkspaceState:
             if not new_cwd.is_dir():
                 raise NotADirectoryError(str(new_cwd))
             self._cwd = new_cwd
+            if self._sync_process_cwd:
+                os.chdir(new_cwd)
             return self.info()
 
     def info(self) -> WorkspaceInfo:

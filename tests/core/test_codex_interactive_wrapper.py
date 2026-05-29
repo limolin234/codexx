@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from advanced_agent.codex_interactive import _clean_terminal_log, _ingest_codex_log_tail, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, codex_mcp_config_args, should_inject_bootstrap
+from advanced_agent.codex_interactive import DEFAULT_BOOTSTRAP_CHARS, _clean_terminal_log, _ingest_codex_log_tail, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, build_combined_model_instructions, codex_mcp_config_args, should_inject_bootstrap
 from advanced_agent.runtime.app import RuntimeApp
 
 
@@ -15,14 +15,17 @@ def test_codex_interactive_env_contains_runtime_handles(tmp_path) -> None:
 
 def test_codex_mcp_config_args_inject_project_server(tmp_path) -> None:
     project_root = tmp_path / "advanced_agent"
+    launch_cwd = tmp_path / "caller"
     project_root.mkdir()
-    args = codex_mcp_config_args(str(tmp_path / "state.sqlite"), str(tmp_path / ".env.json"), project_root=project_root)
+    launch_cwd.mkdir()
+    args = codex_mcp_config_args(str(tmp_path / "state.sqlite"), str(tmp_path / ".env.json"), project_root=project_root, launch_cwd=launch_cwd)
     joined = " ".join(args)
     assert "mcp_servers.advanced-agent.command" in joined
     assert "advanced_agent.mcp_server" in joined
     assert str(tmp_path / "state.sqlite") in joined
-    assert "PYTHONPATH" in joined
-    assert f'mcp_servers.advanced-agent.cwd="{project_root}"' in joined
+    assert f'PYTHONPATH="{project_root / "src"}"' in joined
+    assert f'ADVANCED_AGENT_LAUNCH_CWD="{launch_cwd}"' in joined
+    assert f'mcp_servers.advanced-agent.cwd="{launch_cwd}"' in joined
 
 
 def test_codex_env_separates_project_root_from_launch_cwd(tmp_path, monkeypatch) -> None:
@@ -78,6 +81,31 @@ def test_build_bootstrap_prompt_includes_bounded_recent_tail(tmp_path) -> None:
     assert "important latest wrapper context" in prompt
     assert len(prompt) < 2000
 
+
+
+
+def test_default_bootstrap_is_quiet_and_raw_tail_is_opt_in() -> None:
+    assert DEFAULT_BOOTSTRAP_CHARS == 0
+
+
+def test_combined_model_instructions_preserve_user_and_add_codexx_contract(tmp_path) -> None:
+    project_root = tmp_path / "advanced_agent"
+    docs = project_root / "docs"
+    docs.mkdir(parents=True)
+    (docs / "codexx_runtime_instructions.md").write_text("Use context_get from wrapper memory.", encoding="utf-8")
+    user_file = tmp_path / "user_instructions.md"
+    user_file.write_text("Keep answers concise.", encoding="utf-8")
+
+    out = build_combined_model_instructions(
+        tmp_path / "runtime" / "combined.md",
+        project_root=project_root,
+        user_instructions_path=user_file,
+    )
+
+    text = out.read_text(encoding="utf-8")
+    assert "Keep answers concise." in text
+    assert "Use context_get from wrapper memory." in text
+    assert text.index("Keep answers concise.") < text.index("Use context_get")
 
 def test_should_inject_bootstrap_only_without_explicit_prompt_or_subcommand() -> None:
     assert should_inject_bootstrap([])

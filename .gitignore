@@ -10,3 +10,5 @@ runtime/codex_interactive/*.terminal.log
 .env.json
 .env.*.json
 !.env.example.json
+
+runtime/*.bak

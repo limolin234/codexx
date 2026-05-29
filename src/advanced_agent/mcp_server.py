@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,12 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
 
     db_path = db_path or defaults.default_db()
     config_path = config_path if config_path is not None else defaults.default_config()
-    app = RuntimeApp.create(db_path, config_path=config_path)
+    app = RuntimeApp.create(
+        db_path,
+        config_path=config_path,
+        initial_cwd=os.environ.get("ADVANCED_AGENT_LAUNCH_CWD"),
+        sync_process_cwd=True,
+    )
     bridge = RuntimeToolBridge(app)
     mcp = FastMCP(
         "advanced-agent-runtime",

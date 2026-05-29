@@ -134,3 +134,38 @@ MemoryCandidate
 Raw events may be promoted into memory, but should not be injected merely
 because they exist. The distinction is not two databases; it is metadata,
 facets, importance, and query-time control.
+
+## 2026-05 keyword-first simplification
+
+The memory vector layer is now intentionally compact.  The fixed database
+metadata remains objective (`scope`, `type`, `status`, `importance`,
+`confidence`, `created_at_ms`, `updated_at_ms`, `source_ref`).  The vector labels
+are reduced to a small keyword-first contract:
+
+- `semantic`: bounded summary/content text for broad semantic recall.
+- `keywords`: LLM- or fallback-generated future search terms and short phrases.
+- `workspace`: optional concrete project/path/module context when available.
+
+Do not promote a memory merely because an agent looked at it.  Hotness should
+come from explicit user confirmation, durable decisions, or proven use in an
+answer, not passive observation.  Retrieval is a weighted score over vector
+similarity, FTS keyword match, scope, recency, importance, and confidence.
+
+Existing memories can be rebuilt in place without changing their `memory_items`
+rows:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/migrate_memory_keywords.py --dry-run
+PYTHONPATH=src .venv/bin/python scripts/migrate_memory_keywords.py
+```
+
+The script backs up the SQLite file by default, deletes old vector/facet/FTS rows
+for active memories, and regenerates compact `semantic`/`keywords` labels.
+
+## Codex built-in memory boundary
+
+Advanced Agent should not depend on Codex's built-in `MEMORY.md` as a runtime
+memory source.  Treat it only as an external/importable historical artifact.
+Normal project memory reads and writes must go through the Advanced Agent MCP
+tools and SQLite-backed vector memory so scope, source refs, scoring, migration,
+and auditing stay under this project's control.

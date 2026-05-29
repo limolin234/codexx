@@ -11,10 +11,20 @@ WorkspaceState.cwd
   -> project_info / workdir.chdir
   -> CLI prompt commands
   -> task spawn default workdir
+  -> optional process cwd sync for MCP/server subprocesses
 ```
 
-The Python process cwd can remain the Advanced Agent checkout for import/config
-stability. Runtime work happens relative to `WorkspaceState.cwd`.
+`WorkspaceState` is still the authority.  Runtime components that need a real
+process cwd can opt into process-cwd sync; this makes `workdir.chdir` call
+`os.chdir()` in that same runtime process after validation.
+
+For wrapped interactive Codex, the wrapper also polls the Codex child process
+cwd on Linux via `/proc/<pid>/cwd`.  If Codex itself changes its cwd at runtime,
+the wrapper notices and updates Advanced Agent's runtime cwd to follow it.
+This is one-way observation: a parent process cannot directly `chdir` an
+already-running Codex child from the outside.  Pushing cwd into Codex native
+tools still requires Codex itself to support a runtime cwd change or a restart
+with `-C`.
 
 ## Tools
 
@@ -30,3 +40,10 @@ stability. Runtime work happens relative to `WorkspaceState.cwd`.
 
 Normal user text such as `cd ~/MyProjects/foo` can also be handled by the main
 agent through the `workdir_chdir` capability.
+
+## Wrapped Codex defaults
+
+`codexx` starts the project-local MCP server in the caller launch cwd, not in
+the Advanced Agent checkout.  The MCP server receives the checkout through an
+absolute `PYTHONPATH`, so imports remain stable while cwd semantics match the
+global-agent workspace.

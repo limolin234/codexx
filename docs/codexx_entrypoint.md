@@ -21,7 +21,7 @@ ADVANCED_AGENT_CONFIG=.env.json
 ADVANCED_AGENT_LOG_DIR=runtime/codex_interactive
 ADVANCED_AGENT_SCOPE=project:advanced_agent
 ADVANCED_AGENT_MEMORY_TRUST=high
-ADVANCED_AGENT_BOOTSTRAP_CHARS=1200
+ADVANCED_AGENT_BOOTSTRAP_CHARS=0
 ```
 
 Relative runtime paths such as `runtime/advanced_agent.sqlite` and `.env.json`
@@ -67,32 +67,57 @@ The wrapper then injects the local MCP server into Codex with temporary `-c`
 overrides. Codex gets `context_get`, `memory_write`, `memory_search`, and related
 runtime tools automatically.
 
-## Startup bootstrap context
+## Runtime instruction layering
 
-When `codexx` is launched with no explicit Codex prompt or subcommand, the
-wrapper appends a small initial prompt to Codex containing about
-`ADVANCED_AGENT_BOOTSTRAP_CHARS` characters of recent Advanced Agent raw-tail
-history. The default is `1200`, roughly the intended "about one thousand
-characters" startup context.
+`codexx` does not rely on the Advanced Agent checkout's `AGENTS.md` being read as
+the active project instruction file.  The active project is the caller's current
+working directory, so its own `AGENTS.md` / `AGENT.md` files remain the coding
+instructions for that workspace.
 
-This is only a bounded excerpt. It is meant to let Codex continue the most recent
-work without asking the user to restate it. The bootstrap prompt also tells Codex
-to use MCP tools for deeper context:
+To make the wrapper behavior reliable without mutating `~/.codex/config.toml`,
+`codexx` generates a per-session instruction file under
+`runtime/codex_interactive/` and passes it to Codex with a temporary
+`-c model_instructions_file=...` override.  The generated file contains:
 
-- `context_get`: prior session lines plus vector memory hits.
-- `session_raw_tail`: more bounded raw dialogue from the ring-buffer-like tail.
-- `memory_search`: explicit long-term vector memory lookup.
-- `memory_write`: durable decisions, preferences, progress, and handoffs.
+1. the user's configured global Codex instructions, when
+   `~/.codex/config.toml` has `model_instructions_file`;
+2. the project-local `docs/codexx_runtime_instructions.md` contract, which tells
+   Codex how to use Advanced Agent MCP memory/tools and how to keep wrapper
+   memory separate from target-project instructions.
 
-Disable startup context if needed:
+This keeps Advanced Agent's memory-source policy project-owned and reproducible,
+while preserving the user's normal global Codex preferences for `codexx` runs.
+
+## Startup memory behavior
+
+Default startup is quiet. `codexx` no longer appends a fixed raw-tail prompt when
+it is launched with no explicit Codex prompt or subcommand. This avoids an
+empty-session assistant reply before the user's first real question, and avoids
+spending tokens on raw dialogue that may not be relevant.
+
+The intended first-turn behavior is recall-on-demand:
+
+- project instructions tell Codex to call `context_get` on the first non-trivial
+  user request, using that request as the query, so relevant habits, project
+  preferences, and prior decisions are injected only when needed;
+- raw prior dialogue is retrieved through `session_raw_tail` or `context_get`,
+  instead of being pushed at startup;
+- `memory_search` remains available for explicit long-term vector lookup;
+- `memory_write` remains the durable path for decisions, preferences, progress,
+  and handoffs.
+
+For debugging or a manual continuation session, raw-tail startup injection is
+still available as an opt-in:
 
 ```bash
-codexx --bootstrap-chars 0
+codexx --bootstrap-chars 1200
+# or
+ADVANCED_AGENT_BOOTSTRAP_CHARS=1200 codexx
 ```
 
 If the user supplies an explicit Codex prompt or subcommand, for example
 `codexx "do this exact thing"` or `codexx exec ...`, the wrapper does not append
-the bootstrap prompt.
+any bootstrap prompt unless that future behavior is explicitly changed.
 
 ## Interrupt behavior
 

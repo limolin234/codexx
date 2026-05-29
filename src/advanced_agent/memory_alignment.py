@@ -30,11 +30,10 @@ class LLMMemoryAlignment:
         try:
             raw = self.model.chat([
                 ChatMessage(role="system", content=(
-                    "You are the Advanced Agent memory facet labeler. Output only a JSON object; do not explain. "
-                    "Generate mature multi-dimensional vector-memory facet text. Allowed facets include semantic, workstream, workspace, "
-                    "time, content_type, topic_keywords, free_keywords, methodology, project_feature, implementation, "
-                    "decision, preference, procedure, risk, handoff, chat, and agent_relevance. "
-                    "Facet text must optimize future retrieval, stay factual, and omit dimensions with no evidence."
+                    "You are the Advanced Agent vector-memory keyword labeler. Output only a JSON object; do not explain. "
+                    "Generate compact retrieval labels for a vector database. Prefer keys: semantic, keywords, workspace. "
+                    "keywords should contain high-value future search terms and short phrases, not prose categories. "
+                    "workspace is only for concrete paths/modules/projects visible in the text. Stay factual; omit unsupported fields."
                 )),
                 ChatMessage(role="user", content=f"agent_role={agent_role}\ntext:\n{text[:4000]}"),
             ])

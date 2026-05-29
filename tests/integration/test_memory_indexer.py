@@ -44,7 +44,7 @@ def test_memory_indexer_writes_facets_and_fts(tmp_path) -> None:
         type="decision",
     )
     assert result.created
-    facet = app.db.query_one("SELECT facet_name FROM memory_facets WHERE memory_id=? AND facet_name='decision'", (result.memory_id,))
+    facet = app.db.query_one("SELECT facet_name FROM memory_facets WHERE memory_id=? AND facet_name='keywords'", (result.memory_id,))
     assert facet is not None
     fts = app.db.query_one('SELECT memory_id FROM memory_fts WHERE memory_fts MATCH ?', ('"rare-token-xyzzy"',))
     assert fts is not None

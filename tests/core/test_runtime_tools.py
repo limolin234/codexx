@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from advanced_agent.runtime.app import RuntimeApp
 from advanced_agent.runtime_tools import RuntimeToolBridge
 
@@ -80,18 +82,19 @@ def test_runtime_tool_bridge_context_get_excludes_noisy_logs_by_default(tmp_path
     assert any(item["type"] == "codex_interactive_log" for item in with_logs["memories"])
 
 
-def test_memory_search_supports_query_profile_and_facets(tmp_path) -> None:
+def test_memory_search_supports_query_profile_and_keyword_labels(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
-    app.memory.write(summary="统一相量库按 methodology facet 处理记忆分类", scope="project:facet", type="decision")
+    app.memory.write(summary="统一向量库按 LLM keywords 处理记忆分类", scope="project:facet", type="decision")
     bridge = RuntimeToolBridge(app)
-    found = bridge.call("memory.search", {"query": "记忆分类方法", "scope": "project:facet", "query_profile": "methodology", "top_k": 3})
+    found = bridge.call("memory.search", {"query": "记忆分类 keywords", "scope": "project:facet", "query_profile": "methodology", "top_k": 3})
     assert found["ok"]
     assert found["hits"]
     labels = found["hits"][0].get("labels", {})
-    assert "methodology" in labels or "decision" in labels
+    assert "keywords" in labels
+    assert "semantic" in labels
 
 
-def test_memory_facets_include_workstream_and_free_keywords(tmp_path) -> None:
+def test_memory_facets_are_compact_keywords_first(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     bridge = RuntimeToolBridge(app)
     bridge.call(
@@ -106,11 +109,11 @@ def test_memory_facets_include_workstream_and_free_keywords(tmp_path) -> None:
     found = bridge.call("memory.search", {"query": "sqlite-vec FTS5 ring-buffer", "scope": "topic:agent-runtime", "top_k": 3})
     assert found["ok"] and found["hits"]
     labels = found["hits"][0]["labels"]
-    assert "workstream" in labels
-    assert "topic_keywords" in labels
-    assert "free_keywords" in labels
+    assert set(labels).issubset({"semantic", "keywords", "workspace"})
+    assert "keywords" in labels
+    assert "workstream" not in labels
     assert "project" not in labels
-    assert "sqlite-vec" in labels["free_keywords"] or "fts5" in labels["free_keywords"]
+    assert "sqlite-vec" in labels["keywords"] or "fts5" in labels["keywords"]
 
 
 def test_runtime_tool_bridge_raw_tail_is_bounded(tmp_path) -> None:
@@ -136,3 +139,16 @@ def test_workdir_chdir_updates_runtime_cwd(tmp_path) -> None:
     info = bridge.call("project.info")
     assert info["ok"]
     assert info["data"]["cwd"] == str(target.resolve())
+
+
+def test_workspace_can_sync_process_cwd(tmp_path, monkeypatch) -> None:
+    from advanced_agent.workspace import WorkspaceState
+
+    start = tmp_path / "start"
+    target = tmp_path / "target"
+    start.mkdir()
+    target.mkdir()
+    monkeypatch.chdir(start)
+    workspace = WorkspaceState(start, sync_process_cwd=True)
+    workspace.chdir(target)
+    assert Path.cwd() == target.resolve()

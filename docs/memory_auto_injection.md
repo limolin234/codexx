@@ -80,3 +80,21 @@ The first version uses `sqlite-vec`:
 
 This keeps the edge-device path simple while preserving a clean adapter boundary
 for future embedding/vector backend replacement.
+
+## Keyword-first label contract
+
+`LLMMemoryAlignment` should now behave as a vector-memory keyword labeler, not a
+large ontology classifier.  It should output compact JSON with these preferred
+keys:
+
+```json
+{
+  "semantic": "short factual retrieval text",
+  "keywords": "high-value future search terms and phrases",
+  "workspace": "optional concrete paths/modules/projects"
+}
+```
+
+Unsupported dimensions should be omitted.  Time is maintained by the runtime;
+the labeler should not invent timestamps.  Passive observation is not a hot-memory
+signal.

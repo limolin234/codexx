@@ -123,6 +123,56 @@ class SQLiteVecStore:
             )
         return memory_id
 
+
+    def replace_memory_labels(self, memory_id: str, labels: dict[str, str]) -> int:
+        """Replace vector/facet rows for an existing memory item.
+
+        Used by migrations when the labeling strategy changes.  The durable
+        memory item and source_ref stay intact; only retrieval labels/vectors and
+        FTS text are rebuilt.
+        """
+
+        now = self.time.wall_ms()
+        with self.db.transaction():
+            item = self.db.query_one("SELECT id, scope, type, summary, content FROM memory_items WHERE id=?", (memory_id,))
+            if item is None:
+                return 0
+            old_vectors = self.db.query_all("SELECT vector_collection, vector_id FROM memory_vectors WHERE memory_id=?", (memory_id,))
+            for row in old_vectors:
+                if row["vector_collection"] == self.table:
+                    try:
+                        self.db.conn.execute(f"DELETE FROM {self.table} WHERE rowid=?", (int(row["vector_id"]),))
+                    except Exception:
+                        pass
+            self.db.execute("DELETE FROM memory_vectors WHERE memory_id=?", (memory_id,))
+            self.db.execute("DELETE FROM memory_facets WHERE memory_id=?", (memory_id,))
+            self.db.execute("DELETE FROM memory_fts WHERE memory_id=?", (memory_id,))
+            for label_kind, label_text in labels.items():
+                rowid = self._next_rowid()
+                vector = self.embedding.embed(label_text)
+                self.db.conn.execute(
+                    f"INSERT INTO {self.table}(rowid, embedding) VALUES (?, ?)",
+                    (rowid, self.sqlite_vec.serialize_float32(vector)),
+                )
+                self.db.execute(
+                    """INSERT INTO memory_vectors
+                    (id,memory_id,label_kind,vector_collection,vector_id,embedding_model,label_text,content_hash,created_at_ms)
+                    VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (new_id("vec"), memory_id, label_kind, self.table, str(rowid), "hash-embedding-v1", label_text, hashlib.sha256(label_text.encode()).hexdigest(), now),
+                )
+                self.db.execute(
+                    """INSERT OR REPLACE INTO memory_facets(memory_id, facet_name, facet_text, weight, created_at_ms)
+                    VALUES(?,?,?,?,?)""",
+                    (memory_id, label_kind, label_text, 1.0, now),
+                )
+            facets_text = "\n".join(f"{name}: {text}" for name, text in labels.items())
+            self.db.execute(
+                """INSERT INTO memory_fts(memory_id, scope, type, summary, content, facets)
+                VALUES(?,?,?,?,?,?)""",
+                (memory_id, item["scope"], item["type"], item["summary"], item["content"] or "", facets_text),
+            )
+            return len(labels)
+
     def search(self, query: str, scope: str | None = None, top_k: int = 5, query_profile: str = "auto", facet_weights: dict[str, float] | None = None) -> list[VectorHit]:
         top_k = max(1, min(int(top_k), 128))
         query_vec = self.sqlite_vec.serialize_float32(self.embedding.embed(query))
@@ -300,20 +350,5 @@ class MemoryAlignment:
     def labels_for(self, text: str, agent_role: str = "main") -> dict[str, str]:
         return normalize_facets({
             "semantic": text,
-            "workstream": f"Workstream/topic context related to: {text}",
-            "workspace": f"Workspace/filesystem context related to: {text}",
-            "time": f"Time/recency context related to: {text}",
-            "content_type": f"Content category related to: {text}",
-            "topic_keywords": f"Topic keywords related to: {text}",
-            "free_keywords": text,
-            "methodology": f"Methodology or design habit related to: {text}",
-            "project_feature": f"Project feature/module related to: {text}",
-            "implementation": f"Implementation detail related to: {text}",
-            "decision": f"Decision or confirmed constraint related to: {text}",
-            "preference": f"User preference related to: {text}",
-            "procedure": f"Reusable procedure related to: {text}",
-            "risk": f"Warning or risk related to: {text}",
-            "handoff": f"Progress or handoff related to: {text}",
-            "chat": f"Conversation context related to: {text}",
-            "agent_relevance": f"Relevant for {agent_role} agent: {text}",
+            "keywords": text,
         }, summary=text[:200], content=text)

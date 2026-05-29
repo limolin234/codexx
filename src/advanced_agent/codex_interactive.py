@@ -11,6 +11,8 @@ import struct
 import subprocess
 import sys
 import termios
+import time
+import tomllib
 import tty
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +29,21 @@ class CodexInteractiveSession:
     codex_session_id: str
     log_path: Path
     returncode: int
+
+
+DEFAULT_BOOTSTRAP_CHARS = 0
+
+
+CODEXX_RUNTIME_INSTRUCTIONS_FALLBACK = """# codexx runtime instructions
+
+You are running under the `codexx` wrapper. Keep the user's current working
+directory instructions separate from Advanced Agent wrapper/runtime behavior.
+Use Advanced Agent MCP tools (`context_get`, `memory_search`, `memory_write`,
+`session_raw_tail`, `project_info`, `workdir_chdir`) as the durable memory and
+runtime layer. On the first non-trivial request, call `context_get` before
+answering. Do not treat Codex-side MEMORY.md files as the primary Advanced Agent
+memory source unless the user explicitly asks to audit or migrate them.
+"""
 
 
 BOOTSTRAP_INSTRUCTION = """Advanced Agent bootstrap context.
@@ -71,11 +88,73 @@ def _resolve_runtime_path(path: str | Path, project_root: str | Path | None = No
     return (Path(project_root) if project_root is not None else _package_project_root()) / runtime_path
 
 
+def _codex_config_path() -> Path:
+    codex_home = Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+    return codex_home / "config.toml"
+
+
+def _configured_model_instructions_path(config_path: str | Path | None = None) -> Path | None:
+    path = Path(config_path) if config_path is not None else _codex_config_path()
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, tomllib.TOMLDecodeError, OSError):
+        return None
+    value = data.get("model_instructions_file")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(value).expanduser()
+
+
+def _codexx_runtime_instructions(project_root: str | Path | None = None) -> str:
+    root = Path(project_root) if project_root is not None else _package_project_root()
+    source = root / "docs" / "codexx_runtime_instructions.md"
+    try:
+        text = source.read_text(encoding="utf-8").strip()
+    except OSError:
+        text = CODEXX_RUNTIME_INSTRUCTIONS_FALLBACK.strip()
+    return text
+
+
+def build_combined_model_instructions(
+    output_path: str | Path,
+    *,
+    project_root: str | Path | None = None,
+    user_instructions_path: str | Path | None = None,
+) -> Path:
+    """Write a per-wrapper model instruction file without mutating Codex config.
+
+    Codex accepts one `model_instructions_file`.  To avoid clobbering the user's
+    normal global instructions, `codexx` generates a temporary combined file:
+    global user instructions first, then the small codexx runtime contract.
+    """
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    user_path = Path(user_instructions_path).expanduser() if user_instructions_path is not None else _configured_model_instructions_path()
+    parts: list[str] = []
+    if user_path is not None:
+        try:
+            user_text = user_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            user_text = ""
+        if user_text:
+            parts.extend(["# User Codex instructions", "", user_text, ""])
+    parts.extend([
+        "# Advanced Agent codexx wrapper instructions",
+        "",
+        _codexx_runtime_instructions(project_root),
+        "",
+    ])
+    out.write_text("\n".join(parts), encoding="utf-8")
+    return out
+
+
 def codex_mcp_config_args(
     db_path: str,
     config_path: str | Path | None = None,
     server_name: str | None = None,
     project_root: str | Path | None = None,
+    launch_cwd: str | Path | None = None,
 ) -> list[str]:
     """Return Codex `-c` overrides for the project-local MCP server.
 
@@ -85,6 +164,7 @@ def codex_mcp_config_args(
     """
 
     project_root_path = Path(project_root) if project_root is not None else _package_project_root()
+    launch_cwd_path = Path(launch_cwd) if launch_cwd is not None else Path.cwd()
     config_path = config_path if config_path is not None else defaults.default_config()
     server_name = server_name or defaults.default_mcp_server_name()
     server = f"mcp_servers.{server_name}"
@@ -94,9 +174,9 @@ def codex_mcp_config_args(
         "-c",
         f'{server}.args=["-m","advanced_agent.mcp_server","--db","{db_path}","--config","{config_path or ""}"]',
         "-c",
-        f'{server}.env={{PYTHONPATH="src",ADVANCED_AGENT_DB="{db_path}",ADVANCED_AGENT_CONFIG="{config_path or ""}",ADVANCED_AGENT_SCOPE="{defaults.default_scope()}",ADVANCED_AGENT_MEMORY_TRUST="high",ADVANCED_AGENT_LAUNCH_CWD="{Path.cwd()}"}}',
+        f'{server}.env={{PYTHONPATH="{project_root_path / "src"}",ADVANCED_AGENT_DB="{db_path}",ADVANCED_AGENT_CONFIG="{config_path or ""}",ADVANCED_AGENT_SCOPE="{defaults.default_scope()}",ADVANCED_AGENT_MEMORY_TRUST="high",ADVANCED_AGENT_LAUNCH_CWD="{launch_cwd_path}"}}',
         "-c",
-        f'{server}.cwd="{project_root_path}"',
+        f'{server}.cwd="{launch_cwd_path}"',
     ]
     return args
 
@@ -197,7 +277,7 @@ def run_interactive_codex(
     config_path: str | Path | None = None,
     enable_mcp: bool = True,
     project_root: str | Path | None = None,
-    bootstrap_chars: int = 1200,
+    bootstrap_chars: int = DEFAULT_BOOTSTRAP_CHARS,
 ) -> CodexInteractiveSession:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise RuntimeError("interactive Codex wrapper requires a TTY")
@@ -207,16 +287,21 @@ def run_interactive_codex(
     log_root = _resolve_runtime_path(log_dir, project_root_path)
     log_root.mkdir(parents=True, exist_ok=True)
     log_path = log_root / f"{codex_session_id}.terminal.log"
-    injected_args = codex_mcp_config_args(db_path, config_path, project_root=project_root_path) if enable_mcp else []
+    instruction_path = build_combined_model_instructions(
+        log_root / f"{codex_session_id}.instructions.md",
+        project_root=project_root_path,
+    )
+    instruction_args = ["-c", f'model_instructions_file="{instruction_path}"']
+    injected_args = codex_mcp_config_args(db_path, config_path, project_root=project_root_path, launch_cwd=app.workspace.cwd) if enable_mcp else []
     if bootstrap_chars > 0 and should_inject_bootstrap(codex_args):
         codex_args = [*codex_args, build_bootstrap_prompt(app, session_id, max_chars=bootstrap_chars)]
-    command = ["codex", *injected_args, *codex_args]
-    returncode = _run_pty(command, build_codex_env(app, session_id, db_path, log_path, project_root_path), log_path)
+    command = ["codex", *instruction_args, *injected_args, *codex_args]
+    returncode = _run_pty(command, build_codex_env(app, session_id, db_path, log_path, project_root_path), log_path, child_cwd_callback=lambda cwd: app.chdir(str(cwd)))
     _ingest_codex_log_tail(app, session_id, codex_session_id, log_path)
     return CodexInteractiveSession(session_id=session_id, codex_session_id=codex_session_id, log_path=log_path, returncode=returncode)
 
 
-def _run_pty(command: list[str], env: dict[str, str], log_path: Path) -> int:
+def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_callback=None) -> int:
     master_fd, slave_fd = pty.openpty()
     _copy_winsize(sys.stdin.fileno(), slave_fd)
     proc = subprocess.Popen(command, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, env=env, close_fds=True, start_new_session=True)
@@ -227,6 +312,29 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path) -> int:
         _copy_winsize(sys.stdin.fileno(), master_fd)
 
     old_handler = signal.signal(signal.SIGWINCH, _handle_winch)
+    last_child_cwd: str | None = None
+    last_child_cwd_poll = 0.0
+
+    def _poll_child_cwd() -> None:
+        nonlocal last_child_cwd, last_child_cwd_poll
+        if child_cwd_callback is None:
+            return
+        now = time.monotonic()
+        if now - last_child_cwd_poll < 0.25:
+            return
+        last_child_cwd_poll = now
+        try:
+            child_cwd = os.readlink(f"/proc/{proc.pid}/cwd")
+        except OSError:
+            return
+        if child_cwd == last_child_cwd:
+            return
+        last_child_cwd = child_cwd
+        try:
+            child_cwd_callback(Path(child_cwd))
+        except Exception:
+            return
+
     try:
         # The wrapper is a PTY proxy. The parent terminal must be raw too;
         # otherwise arrows/control keys are line-buffered and Codex receives
@@ -234,7 +342,8 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path) -> int:
         tty.setraw(sys.stdin.fileno())
         with log_path.open("ab") as log:
             while True:
-                readable, _, _ = select.select([sys.stdin.fileno(), master_fd], [], [])
+                _poll_child_cwd()
+                readable, _, _ = select.select([sys.stdin.fileno(), master_fd], [], [], 0.25)
                 if master_fd in readable:
                     try:
                         data = os.read(master_fd, 4096)
@@ -403,7 +512,7 @@ def main() -> None:
     parser.add_argument("--session-title", default=defaults.default_session_title())
     parser.add_argument("--log-dir", default=defaults.default_log_dir())
     parser.add_argument("--project-root", default=os.environ.get("ADVANCED_AGENT_PROJECT_ROOT"), help="Advanced Agent project root for runtime files/MCP server. Codex still opens in the caller's current directory.")
-    parser.add_argument("--bootstrap-chars", type=int, default=int(os.environ.get("ADVANCED_AGENT_BOOTSTRAP_CHARS", "1200")), help="Inject this many chars of recent Advanced Agent raw-tail context as Codex's initial prompt when no prompt/subcommand is supplied. Use 0 to disable.")
+    parser.add_argument("--bootstrap-chars", type=int, default=int(os.environ.get("ADVANCED_AGENT_BOOTSTRAP_CHARS", str(DEFAULT_BOOTSTRAP_CHARS))), help="Opt-in: inject this many chars of recent Advanced Agent raw-tail context as Codex's initial prompt when no prompt/subcommand is supplied. Default 0 keeps startup quiet; use MCP recall on the first real request instead.")
     parser.add_argument("--no-mcp", action="store_true", help="Do not inject the project-local Advanced Agent MCP server into Codex.")
     parser.add_argument("codex_args", nargs=argparse.REMAINDER, help="Arguments passed through to codex. Use -- before codex args if needed.")
     args = parser.parse_args()

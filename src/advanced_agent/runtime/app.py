@@ -76,7 +76,14 @@ class RuntimeApp:
     completed_background: dict[str, object]
 
     @classmethod
-    def create(cls, db_path: str | Path, config_path: str | Path | None = None) -> "RuntimeApp":
+    def create(
+        cls,
+        db_path: str | Path,
+        config_path: str | Path | None = None,
+        *,
+        initial_cwd: str | Path | None = None,
+        sync_process_cwd: bool = False,
+    ) -> "RuntimeApp":
         time = TimeService()
         config = RuntimeConfig.load(config_path)
         router = ModelRouter.from_config(config)
@@ -91,7 +98,7 @@ class RuntimeApp:
         profiles = ProfileStore(db)
         overlays = PromptOverlayStore(db)
         hooks = HookStore(db)
-        workspace = WorkspaceState()
+        workspace = WorkspaceState(initial_cwd, sync_process_cwd=sync_process_cwd)
         capabilities = BackendRegistry()
         capability_router = CapabilityRouter(capabilities)
         audit_store = AuditStore(db)

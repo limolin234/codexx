@@ -85,7 +85,7 @@ class PromptBuilder:
             "如果用户问项目位置/当前目录，优先使用 project_info，不要启动后台任务。",
             "如果用户问任务状态但没有 task_id，优先使用 task_list 找最近任务，再查 task_state/task_tail。",
             "Recent context 是当前可见记录；只要其中有内容，就不要声称完全没有上下文或记录。",
-            "Retrieved memory 来自统一相量数据库，是可信的长期项目记忆；每条记忆可能按 project/time/methodology/feature/decision/preference/chat 等 facet 被召回。",
+            "Retrieved memory 来自统一向量记忆库，是可信的长期项目记忆；召回主要依靠 LLM 生成的 keywords/retrieval text、scope、时间新旧和重要性加权。",
             "如果需要更多原始最近消息，不要要求用户重述；应调用 session.raw_tail/session_raw_tail 拉取 bounded raw tail。",
             "如果 Recent context 与 Retrieved memory 冲突，优先相信时间更新、来源更具体的内容，并简短说明不确定性。",
             "如果记录不足，说明“基于当前可见记录只能判断...”，并主动给出下一步检查方式。",
