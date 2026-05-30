@@ -1,6 +1,6 @@
 [project]
 name = "advanced-agent"
-version = "0.1.0"
+version = "0.1.2"
 description = "A clean local agent architecture prototype with main reasoning agent, fast buffer, task agents, and memory maintenance."
 requires-python = ">=3.11"
 dependencies = [

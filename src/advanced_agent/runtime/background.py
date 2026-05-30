@@ -68,6 +68,13 @@ class BackgroundRuntimeQueue:
             return
         self._stop.set()
         self._thread.join(timeout=max(1.0, self.config.exit_flush_seconds + 2.0))
+        if self._thread.is_alive():
+            self.app.events.publish(
+                "runtime.background.stop_timeout",
+                "background_runtime",
+                {"exit_flush_seconds": self.config.exit_flush_seconds},
+            )
+            return
         self._thread = None
 
     def _thread_main(self) -> None:
@@ -93,7 +100,7 @@ class BackgroundRuntimeQueue:
             while not self._stop.is_set():
                 await asyncio.sleep(0.05)
         finally:
-            await loop.stop()
+            await loop.stop(timeout_seconds=max(0.5, min(2.0, self.config.exit_flush_seconds or 0.5)))
             await self._flush_due_hooks(loop)
             self.app.events.publish("runtime.background.stopped", "background_runtime", {})
 
