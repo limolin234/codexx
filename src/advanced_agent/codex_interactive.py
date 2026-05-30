@@ -40,9 +40,16 @@ You are running under the `codexx` wrapper. Keep the user's current working
 directory instructions separate from Advanced Agent wrapper/runtime behavior.
 Use Advanced Agent MCP tools (`context_get`, `memory_write`,
 `session_raw_tail`, `project_info`) as the durable memory and runtime layer.
-On the first non-trivial request, call `context_get` before
-answering. Do not treat Codex-side MEMORY.md files as the primary Advanced Agent
-memory source unless the user explicitly asks to audit or migrate them.
+Call `context_get` for previous progress, project state, repo decisions,
+explicit long-term lookup, or other context-dependent work. Answer clearly
+self-contained questions directly. Do not treat Codex-side MEMORY.md files as
+the primary Advanced Agent memory source unless the user explicitly asks to audit
+or migrate them.
+
+Work with the user as a peer collaborator. Communicate more when architecture,
+tradeoffs, or uncertain execution choices matter; avoid silent large changes.
+Keep replies practical and direct; do not over-praise, over-encourage, or add
+motivational padding.
 """
 
 
@@ -72,7 +79,7 @@ def build_codex_env(app: RuntimeApp, session_id: str, db_path: str, log_path: Pa
         "ADVANCED_AGENT_LAUNCH_CWD": str(Path.cwd()),
         "ADVANCED_AGENT_SCOPE": defaults.default_scope(),
         "ADVANCED_AGENT_MEMORY_TRUST": "high",
-        "ADVANCED_AGENT_MCP_HINT": "Use context_get before denying previous context; use memory_write for records and handoffs.",
+        "ADVANCED_AGENT_MCP_HINT": "Use context_get for prior/project context; use memory_write for records and handoffs.",
     })
     return env
 

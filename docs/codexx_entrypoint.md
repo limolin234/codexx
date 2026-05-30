@@ -98,9 +98,9 @@ spending tokens on raw dialogue that may not be relevant.
 
 The intended first-turn behavior is recall-on-demand:
 
-- project instructions tell Codex to call `context_get` on the first non-trivial
-  user request, using that request as the query, so relevant habits, project
-  preferences, and prior decisions are injected only when needed;
+- project instructions tell Codex to call `context_get` only for
+  context-dependent requests, so relevant habits, project preferences, and prior
+  decisions are retrieved through tools instead of repeated manual injection;
 - raw prior dialogue is retrieved through `session_raw_tail` or `context_get`,
   instead of being pushed at startup;
 - explicit long-term vector lookup also goes through `context_get`;

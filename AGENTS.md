@@ -6,7 +6,8 @@ Use the project-local MCP tools instead of guessing about memory or project stat
 Core behavior:
 
 - Startup should stay quiet: do not rely on a fixed raw-tail bootstrap prompt being injected at launch. Raw prior dialogue should be retrieved on demand with `context_get` / `session_raw_tail`.
-- On the first non-trivial user request in a wrapper session, call `context_get` with the user request as query to hydrate relevant habits, project preferences, and prior decisions before answering; skip only clearly self-contained trivial asks.
+- Treat startup instructions as the one-time common context. Do not manually re-inject project state, previous-turn excerpts, or broad profile summaries into every reply. Call `context_get` when the request is context-dependent: previous progress, project state, repo decisions, explicit long-term lookup, or ambiguous work that would benefit from memory; answer clearly self-contained questions directly.
+- Work with the user as a peer collaborator. Communicate more when architecture, tradeoffs, or uncertain execution choices matter; avoid silent large changes. Keep replies practical and direct; do not over-praise, over-encourage, or add motivational padding.
 - For questions like “之前说了什么”, “现在做到哪了”, “这个项目在干什么”, explicit long-term lookup, vague “最近干了什么”, or any context-dependent request, call `context_get` first. It is the single model-facing read path: query-based calls do semantic vector retrieval; empty-query/recent-style calls use durable memories newest-first by `updated_at_ms DESC, created_at_ms DESC, rowid DESC`, so do not run extra shell/Python sorting unless separate analysis is required.
 - When the user asks to “记录”, “记住”, “写入记忆”, or when you finish an important project decision/handoff, call `memory_write`.
 - Trust Advanced Agent vector memory as the durable project memory layer. If `context_get` returns relevant records, use them confidently instead of saying you cannot see previous context.
