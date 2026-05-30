@@ -31,10 +31,12 @@ progress, decisions, validations, and handoffs while doing the work.
 `user_profiles.summary` and `prompt_overlays:user_profile` are only compact
 startup hints for internal prompt builders. They are not the authoritative
 profile. Codex-facing runtime calls receive profile through a separate
-`profile_hints` capsule in `context_get`, selected from high-confidence vector
-profile records without waiting on a model. Complex profile state remains
-searchable through the vector memory store, but ordinary task memories do not
-include profile records by default.
+`profile_hints` capsule in `context_get`, selected by `ProfileHintSelector`
+from high-confidence vector profile records without waiting on a model. The
+selector performs local vector/FTS retrieval plus policy filtering, scope
+fallback, raw-evidence suppression, and injection dedupe at the caller boundary.
+Complex profile state remains searchable through the vector memory store, but
+ordinary task memories do not include profile records by default.
 
 Durable profile updates are diff-based and authoritative writes are owned by a
 strong model. The cheap `memory_model` is only an observer: it may propose
@@ -71,6 +73,10 @@ Injection should be minimal:
 - internal compact profile overlay from high-confidence vector traits: about 800 chars
 - Codex-facing `profile_hints`: at most 3 short hints, deduped per caller session
 - ordinary query-routed memories: summary-only compact view by default
+
+The request-time selector must not call an LLM. Expensive profile maintenance is
+asynchronous; prompt-time injection is a cheap read from already indexed profile
+memory.
 
 Everything else should remain searchable through memory tools.
 

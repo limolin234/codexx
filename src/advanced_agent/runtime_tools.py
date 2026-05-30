@@ -190,7 +190,11 @@ class RuntimeToolBridge:
                     break
             self.app.memory.mark_used([memory.memory_id for memory in memories])
 
-            profile_hints = self._profile_hints(scope=scope, session_id=session_id, caller_session_id=caller_session_id, limit=profile_limit, dedupe=dedupe)
+            selected_profile_hints = self.app.profile_hints.select(query=query, scope=scope, limit=max(profile_limit * 4, profile_limit), query_profile=query_profile) if include_profile else []
+            if dedupe == "on" and include_profile:
+                seen_profile_keys = self.app.injection_ledger.seen_ids(session_id, caller_session_id, "profile_hint")
+                selected_profile_hints = [hint for hint in selected_profile_hints if hint.profile_key not in seen_profile_keys]
+            profile_hints = selected_profile_hints[:profile_limit]
 
             include_memory_content = bool(args.get("include_memory_content", mode == "full"))
             memory_content_max_chars = int(args.get("memory_content_max_chars", 1200 if mode == "full" else 600))
@@ -215,7 +219,7 @@ class RuntimeToolBridge:
                     session_id=session_id,
                     caller_session_id=caller_session_id,
                     item_kind="profile_hint",
-                    items=[(hint["profile_key"], str(hint.get("updated_at_ms", ""))) for hint in profile_hints],
+                    items=[(hint.profile_key, str(hint.updated_at_ms)) for hint in profile_hints],
                 )
 
             result = {
@@ -223,7 +227,7 @@ class RuntimeToolBridge:
                 "session_id": session_id,
                 "mode": mode,
                 "context_lines": lines,
-                "profile_hints": profile_hints,
+                "profile_hints": [hint.to_dict() for hint in profile_hints],
                 "memories": memory_items,
             }
             if view == "debug":
@@ -296,40 +300,6 @@ class RuntimeToolBridge:
             data["content"] = content[:content_max_chars]
             data["content_truncated"] = len(content) > content_max_chars
         return data
-
-    def _profile_hints(self, *, scope: str, session_id: str, caller_session_id: str, limit: int, dedupe: str) -> list[dict[str, Any]]:
-        if limit <= 0:
-            return []
-        seen = self.app.injection_ledger.seen_ids(session_id, caller_session_id, "profile_hint") if dedupe == "on" else set()
-        rows = self.app.db.query_all(
-            """SELECT id, type, summary, importance, confidence, source_strength, updated_at_ms, metadata_json
-            FROM memory_items
-            WHERE scope=? AND status='active' AND type IN ('user_trait','preference','workflow_habit')
-              AND confidence>=0.8 AND importance>=0.6
-              AND source_strength NOT IN ('assistant_output','wrapper_inference')
-            ORDER BY importance DESC, confidence DESC, updated_at_ms DESC
-            LIMIT ?""",
-            (scope, max(limit * 4, limit)),
-        )
-        hints: list[dict[str, Any]] = []
-        used_keys: set[str] = set()
-        for row in rows:
-            metadata = {}
-            if row["metadata_json"]:
-                try:
-                    import json
-                    metadata = json.loads(row["metadata_json"])
-                except Exception:
-                    metadata = {}
-            profile_key = str(metadata.get("profile_key") or metadata.get("kind") or row["id"])
-            if profile_key in seen or profile_key in used_keys:
-                continue
-            used_keys.add(profile_key)
-            hints.append({"profile_key": profile_key, "hint": row["summary"], "updated_at_ms": int(row["updated_at_ms"])})
-            if len(hints) >= limit:
-                break
-        return hints
-
 
 def _result_dict(result: CapabilityResult) -> dict[str, Any]:
     return {"ok": result.ok, "data": result.data, "error": result.error, "request_id": result.request_id}

@@ -5,9 +5,9 @@ import json
 from dataclasses import dataclass
 
 from advanced_agent.auto_memory_design import AutoMemoryPolicy, MemoryCandidateAction, MemoryEvidenceSource, ProfileDiffPatch
-from advanced_agent.major_memory_writer import MajorModelMemoryWriter
+from advanced_agent.profile.writer import MajorModelMemoryWriter
 from advanced_agent.memory_service import MemoryRecord, MemoryService
-from advanced_agent.profile_model import DeterministicProfileMaintainer, ProfileEvidence, ProfileMaintainer
+from advanced_agent.profile.observer import DeterministicProfileMaintainer, ProfileEvidence, ProfileMaintainer
 from advanced_agent.stores.profile_store import ProfileStore, PromptOverlayStore
 from advanced_agent.stores.session_store import SessionStore
 from advanced_agent.time_service import TimeService

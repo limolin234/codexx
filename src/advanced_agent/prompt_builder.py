@@ -76,6 +76,7 @@ class PromptBuilder:
         built = self.context_builder.build_for_main(session_id, user_text, scope=scope)
         recent = "\n".join(built.recent_messages)
         memories = "\n".join(_memory_line(hit) for hit in built.retrieved_memories)
+        profile_hints = "\n".join(f"- {hint.hint}" for hint in built.profile_hints)
         capability_text = self.capabilities.list_for_prompt() if self.capabilities else "(capabilities unavailable)"
         system = "\n".join([
             "你是 Advanced Agent 的 main agent，是语义权威。",
@@ -86,6 +87,15 @@ class PromptBuilder:
             "如果用户问任务状态但没有 task_id，优先使用 task_list 找最近任务，再查 task_state/task_tail。",
             "Recent context 是当前可见记录；只要其中有内容，就不要声称完全没有上下文或记录。",
             "Retrieved memory 来自统一向量记忆库，是可信的长期项目记忆；召回主要依靠 LLM 生成的 keywords/retrieval text、scope、时间新旧和重要性加权。",
+            *(
+                [
+                    "Relevant user-profile hints are compact, high-confidence preferences selected for the current query; use them only as soft guidance, not as facts.",
+                    "Relevant user-profile hints:",
+                    profile_hints,
+                ]
+                if profile_hints
+                else []
+            ),
             "如果需要更多原始最近消息，不要要求用户重述；应调用 session.raw_tail/session_raw_tail 拉取 bounded raw tail。",
             "如果 Recent context 与 Retrieved memory 冲突，优先相信时间更新、来源更具体的内容，并简短说明不确定性。",
             "如果记录不足，说明“基于当前可见记录只能判断...”，并主动给出下一步检查方式。",

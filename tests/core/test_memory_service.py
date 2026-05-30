@@ -2,8 +2,8 @@ import json
 
 from advanced_agent.runtime.app import RuntimeApp
 from advanced_agent.llm import ChatMessage, ChatResponse, ToolCall
-from advanced_agent.major_memory_writer import MajorModelMemoryWriter
-from advanced_agent.profile_model import LLMProfileMaintainer
+from advanced_agent.profile.writer import MajorModelMemoryWriter
+from advanced_agent.profile.observer import LLMProfileMaintainer
 
 
 def test_memory_service_write_search_hydrates_content_and_dedups_labels(tmp_path) -> None:

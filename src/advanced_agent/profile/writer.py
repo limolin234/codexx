@@ -7,7 +7,7 @@ from typing import Any
 from advanced_agent.auto_memory_design import MemoryCandidateAction, MemoryEvidenceSource, ProfileDiffPatch, PROFILE_DIFF_PROMPT_CONTRACT
 from advanced_agent.llm import ChatMessage, LLMError, OpenAICompatibleClient, ToolCall
 from advanced_agent.memory_service import MemoryRecord
-from advanced_agent.profile_model import ProfileEvidence
+from advanced_agent.profile.observer import ProfileEvidence
 
 
 MEMORY_WRITE_TOOL_NAME = "memory_profile_patch"

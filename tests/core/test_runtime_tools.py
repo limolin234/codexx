@@ -124,6 +124,150 @@ def test_context_get_returns_profile_hints_without_memory_metadata(tmp_path) -> 
     assert again["profile_hints"] == []
 
 
+def test_context_get_respects_include_profile_false(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    app.memory.write(
+        summary="Prefer compact answers.",
+        scope="project:profile",
+        type="preference",
+        importance=0.9,
+        confidence=0.95,
+        source_strength="explicit_user",
+        metadata={"profile_key": "collaboration.compact"},
+    )
+    bridge = RuntimeToolBridge(app)
+    ctx = bridge.call(
+        "context.get",
+        {
+            "session_id": sid,
+            "query": "ordinary project question",
+            "scope": "project:profile",
+            "include_profile": False,
+            "caller_session_id": "codexsess_profile_disabled",
+        },
+    )
+    assert ctx["profile_hints"] == []
+
+
+def test_context_get_does_not_inject_raw_profile_evidence(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    app.memory.write(
+        summary="[profile_evidence] The user said one raw thing that is not distilled yet.",
+        scope="project:profile",
+        type="user_trait",
+        importance=0.9,
+        confidence=0.95,
+        source_strength="user_behavior",
+        metadata={"kind": "profile_evidence"},
+    )
+    app.memory.write(
+        summary="Prefer compact answers.",
+        scope="project:profile",
+        type="preference",
+        importance=0.8,
+        confidence=0.95,
+        source_strength="explicit_user",
+        metadata={"profile_key": "collaboration.compact"},
+    )
+    bridge = RuntimeToolBridge(app)
+    ctx = bridge.call(
+        "context.get",
+        {
+            "session_id": sid,
+            "query": "ordinary project question",
+            "scope": "project:profile",
+            "caller_session_id": "codexsess_profile_evidence",
+            "profile_limit": 3,
+        },
+    )
+    assert ctx["profile_hints"] == [
+        {
+            "profile_key": "collaboration.compact",
+            "hint": "Prefer compact answers.",
+            "updated_at_ms": ctx["profile_hints"][0]["updated_at_ms"],
+        }
+    ]
+
+
+def test_context_get_profile_hints_are_query_relevant(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    app.memory.write(
+        summary="For A7S hardware bring-up, prefer UART-first checks and power evidence.",
+        scope="project:profile",
+        type="preference",
+        importance=0.8,
+        confidence=0.95,
+        source_strength="explicit_user",
+        metadata={"profile_key": "hardware.a7s"},
+    )
+    app.memory.write(
+        summary="For study-note workflows, put formulas and derivations in tmp.md.",
+        scope="project:profile",
+        type="preference",
+        importance=0.8,
+        confidence=0.95,
+        source_strength="explicit_user",
+        metadata={"profile_key": "study.tmp"},
+    )
+    bridge = RuntimeToolBridge(app)
+    ctx = bridge.call(
+        "context.get",
+        {
+            "session_id": sid,
+            "query": "A7S UART power bring-up",
+            "scope": "project:profile",
+            "caller_session_id": "codexsess_profile_relevance",
+            "profile_limit": 1,
+        },
+    )
+    assert ctx["profile_hints"][0]["profile_key"] == "hardware.a7s"
+
+
+def test_context_get_profile_hints_use_scope_fallback(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    app.memory.write(
+        summary="For Advanced Agent work, avoid markdown memory side effects.",
+        scope="advanced_agent",
+        type="workflow_habit",
+        importance=0.85,
+        confidence=0.95,
+        source_strength="explicit_user",
+        metadata={"profile_key": "advanced_agent.memory_boundary"},
+    )
+    bridge = RuntimeToolBridge(app)
+    ctx = bridge.call(
+        "context.get",
+        {
+            "session_id": sid,
+            "query": "advanced_agent memory markdown side effects",
+            "scope": "project:advanced_agent",
+            "caller_session_id": "codexsess_profile_fallback",
+        },
+    )
+    assert ctx["profile_hints"][0]["profile_key"] == "advanced_agent.memory_boundary"
+
+
+def test_context_builder_injects_profile_hints_separately_from_memories(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    app.memory.write(
+        summary="For Advanced Agent work, avoid markdown memory side effects.",
+        scope="project:advanced_agent",
+        type="workflow_habit",
+        importance=0.85,
+        confidence=0.95,
+        source_strength="explicit_user",
+        metadata={"profile_key": "advanced_agent.memory_boundary"},
+    )
+    built = app.context_builder.build_for_main(sid, "advanced_agent markdown memory", scope="project:advanced_agent")
+    assert [hint.profile_key for hint in built.profile_hints] == ["advanced_agent.memory_boundary"]
+    assert all(hit.type not in {"user_trait", "preference", "workflow_habit"} for hit in built.retrieved_memories)
+
+
 def test_memory_search_supports_query_profile_and_keyword_labels(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     app.memory.write(summary="统一向量库按 LLM keywords 处理记忆分类", scope="project:facet", type="decision")
