@@ -20,6 +20,7 @@ from pathlib import Path
 from advanced_agent import defaults
 from advanced_agent.hooks import HookKind
 from advanced_agent.runtime.app import RuntimeApp
+from advanced_agent.runtime.background import BackgroundRuntimeQueue
 from advanced_agent.models import Message, new_id
 
 
@@ -303,10 +304,16 @@ def run_interactive_codex(
     if bootstrap_chars > 0 and should_inject_bootstrap(codex_args):
         codex_args = [*codex_args, build_bootstrap_prompt(app, session_id, max_chars=bootstrap_chars)]
     command = ["codex", *instruction_args, *injected_args, *codex_args]
-    returncode = _run_pty(command, build_codex_env(app, session_id, db_path, log_path, project_root_path), log_path, child_cwd_callback=lambda cwd: app.chdir(str(cwd)))
-    _record_codex_close_event(app, session_id, codex_session_id, log_path, returncode)
-    _append_codex_log_tail_to_ring_buffer(app, session_id, codex_session_id, log_path)
-    _enqueue_codex_close_maintenance(app, session_id, codex_session_id, log_path, returncode)
+    background_runtime = BackgroundRuntimeQueue(app)
+    background_runtime.start()
+    returncode = -1
+    try:
+        returncode = _run_pty(command, build_codex_env(app, session_id, db_path, log_path, project_root_path), log_path, child_cwd_callback=lambda cwd: app.chdir(str(cwd)))
+    finally:
+        _record_codex_close_event(app, session_id, codex_session_id, log_path, returncode)
+        _append_codex_log_tail_to_ring_buffer(app, session_id, codex_session_id, log_path)
+        _enqueue_codex_close_maintenance(app, session_id, codex_session_id, log_path, returncode)
+        background_runtime.stop()
     return CodexInteractiveSession(session_id=session_id, codex_session_id=codex_session_id, log_path=log_path, returncode=returncode)
 
 

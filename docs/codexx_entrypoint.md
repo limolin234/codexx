@@ -107,6 +107,21 @@ The intended first-turn behavior is recall-on-demand:
 - `memory_write` remains the durable path for decisions, preferences, progress,
   and handoffs.
 
+During interactive `codexx`, a lightweight background runtime queue consumes
+due `runtime_hooks` while the Codex PTY is alive and flushes briefly on exit.
+This gives memory/profile/compaction maintenance a normal automatic path without
+requiring users to manually run `advanced-agentd --once` after every session.
+The request-time prompt path still stays tool-driven; the background queue only
+processes scheduled maintenance work.
+
+Environment controls:
+
+- `ADVANCED_AGENT_CODEXX_BACKGROUND_MAINTENANCE=0` disables the codexx-owned
+  background queue.
+- `ADVANCED_AGENT_CODEXX_MAINTENANCE_TICK=2.0` controls the tick interval.
+- `ADVANCED_AGENT_CODEXX_EXIT_FLUSH_SECONDS=3.0` controls the best-effort exit
+  flush window.
+
 `memory_write` is intentionally a vector-memory/database operation only. It
 does not imply writing markdown memory notes. Human/git-facing markdown files
 such as project progress logs, handoff documents, or docs should be edited only
