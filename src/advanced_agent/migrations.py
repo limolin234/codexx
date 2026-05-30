@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from advanced_agent.stores.schema import SCHEMA_SQL
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 @dataclass(slots=True)
@@ -45,6 +45,8 @@ class MigrationRunner:
                 self._migrate_to_v4()
             if current < 5:
                 self._migrate_to_v5()
+            if current < 6:
+                self._migrate_to_v6()
             self._set_version(CURRENT_SCHEMA_VERSION)
             upgraded = True
             current = CURRENT_SCHEMA_VERSION
@@ -201,6 +203,24 @@ class MigrationRunner:
                 self.conn.execute(f"ALTER TABLE memory_items ADD COLUMN {name} {definition}")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_status_updated ON memory_items(status, updated_at_ms)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_superseded_by ON memory_items(superseded_by)")
+
+    def _migrate_to_v6(self) -> None:
+        """Add session-local injection ledger for wrapper context dedupe."""
+
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS session_injection_ledger (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            caller_session_id TEXT NOT NULL DEFAULT '',
+            item_kind TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            item_version TEXT,
+            source_tool TEXT NOT NULL,
+            injected_at_ms INTEGER NOT NULL,
+            UNIQUE(session_id, caller_session_id, item_kind, item_id)
+            )"""
+        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_injection_ledger_session ON session_injection_ledger(session_id, caller_session_id, item_kind)")
 
     def _merge_text(self, left: str | None, right: str | None) -> str:
         parts = []

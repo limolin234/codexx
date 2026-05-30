@@ -145,45 +145,102 @@ class RuntimeToolBridge:
             mode = str(args.get("mode", "supplement"))
             if mode not in {"supplement", "full"}:
                 raise ValueError("context.get mode must be 'supplement' or 'full'")
+            view = str(args.get("view", "compact"))
+            if view not in {"compact", "debug"}:
+                raise ValueError("context.get view must be 'compact' or 'debug'")
+            dedupe = str(args.get("dedupe", "on"))
+            if dedupe not in {"on", "off"}:
+                raise ValueError("context.get dedupe must be 'on' or 'off'")
+            caller_session_id = str(args.get("caller_session_id") or args.get("codex_session_id") or "")
             recent_limit = int(args.get("recent_limit", 20))
             memory_top_k = int(args.get("memory_top_k", 5))
             query_profile = str(args.get("query_profile", "auto"))
             facet_weights = args.get("facet_weights")
             live_recent_limit = max(0, int(args.get("live_recent_limit", 12)))
+            include_profile_arg = args.get("include_profile")
+            include_profile = bool(include_profile_arg) if include_profile_arg is not None else mode == "supplement"
+            profile_limit = int(args.get("profile_limit", 3))
             compact_result = self.app.compactor.maybe_compact(session_id, scope=scope)
-            all_lines = self.app.sessions.session_context_lines(session_id, include_compacted=bool(args.get("include_compacted", False)))
+
+            all_items = self.app.sessions.session_context_items(session_id, include_compacted=bool(args.get("include_compacted", False)))
             if mode == "supplement" and live_recent_limit:
-                candidate_lines = all_lines[:-live_recent_limit] if len(all_lines) > live_recent_limit else []
+                candidate_items = all_items[:-live_recent_limit] if len(all_items) > live_recent_limit else []
             else:
-                candidate_lines = all_lines
-            lines = candidate_lines[-recent_limit:]
+                candidate_items = all_items
+            seen_context_ids = self.app.injection_ledger.seen_ids(session_id, caller_session_id, "context_line") if dedupe == "on" else set()
+            selected_context_items = [item for item in candidate_items if str(item["id"]) not in seen_context_ids][-recent_limit:]
+            lines = [item["line"] for item in selected_context_items]
+
             include_log_memories = bool(args.get("include_log_memories", False))
             exclude_types = set(args.get("exclude_memory_types", []) or [])
             if not include_log_memories:
                 exclude_types.add("codex_interactive_log")
+            exclude_types.update({"user_trait", "preference", "workflow_habit"})
             fetch_k = max(memory_top_k * 4, memory_top_k)
             raw_memories = self.app.memory.search(query, scope=scope, top_k=fetch_k, query_profile=query_profile, facet_weights=facet_weights) if query else self.app.memory.recent(scope=scope, limit=fetch_k)
-            memories = [memory for memory in raw_memories if memory.type not in exclude_types][:memory_top_k]
+            seen_memory_ids = self.app.injection_ledger.seen_ids(session_id, caller_session_id, "memory") if dedupe == "on" and query else set()
+            memories = []
+            for memory in raw_memories:
+                if memory.type in exclude_types:
+                    continue
+                if memory.memory_id in seen_memory_ids:
+                    continue
+                memories.append(memory)
+                if len(memories) >= memory_top_k:
+                    break
             self.app.memory.mark_used([memory.memory_id for memory in memories])
+
+            profile_hints = self._profile_hints(scope=scope, session_id=session_id, caller_session_id=caller_session_id, limit=profile_limit, dedupe=dedupe)
+
             include_memory_content = bool(args.get("include_memory_content", mode == "full"))
             memory_content_max_chars = int(args.get("memory_content_max_chars", 1200 if mode == "full" else 600))
-            return {
+            compact_memories = [self._compact_memory_dict(hit, include_content=include_memory_content, content_max_chars=memory_content_max_chars) for hit in memories]
+            memory_items = [hit.to_dict(include_content=include_memory_content, content_max_chars=memory_content_max_chars) for hit in memories] if view == "debug" else compact_memories
+
+            if dedupe == "on":
+                self.app.injection_ledger.mark_many(
+                    session_id=session_id,
+                    caller_session_id=caller_session_id,
+                    item_kind="context_line",
+                    items=[(str(item["id"]), str(item["created_at_ms"])) for item in selected_context_items],
+                )
+                if query:
+                    self.app.injection_ledger.mark_many(
+                        session_id=session_id,
+                        caller_session_id=caller_session_id,
+                        item_kind="memory",
+                        items=[(memory.memory_id, str(memory.updated_at_ms)) for memory in memories],
+                    )
+                self.app.injection_ledger.mark_many(
+                    session_id=session_id,
+                    caller_session_id=caller_session_id,
+                    item_kind="profile_hint",
+                    items=[(hint["profile_key"], str(hint.get("updated_at_ms", ""))) for hint in profile_hints],
+                )
+
+            result = {
                 "ok": True,
                 "session_id": session_id,
                 "mode": mode,
-                "maintenance": {"compacted": compact_result.compacted, "reason": compact_result.reason, "memory_id": compact_result.memory_id, "compacted_messages": compact_result.compacted_messages},
-                "live_recent_skipped": min(live_recent_limit, len(all_lines)) if mode == "supplement" else 0,
-                "query_profile": query_profile,
-                "facet_weights": facet_weights or {},
-                "excluded_memory_types": sorted(exclude_types),
-                "recent": lines,
-                "supplemental_recent": lines,
-                "memories": [
-                    hit.to_dict(include_content=include_memory_content, content_max_chars=memory_content_max_chars)
-                    for hit in memories
-                ],
-                "instruction": "Use this as supplemental prior context. In supplement mode, assume the external agent already sees the live recent dialogue; do not duplicate it unless you need mode='full'.",
+                "context_lines": lines,
+                "profile_hints": profile_hints,
+                "memories": memory_items,
             }
+            if view == "debug":
+                result.update({
+                    "maintenance": {"compacted": compact_result.compacted, "reason": compact_result.reason, "memory_id": compact_result.memory_id, "compacted_messages": compact_result.compacted_messages},
+                    "live_recent_skipped": min(live_recent_limit, len(all_items)) if mode == "supplement" else 0,
+                    "query_profile": query_profile,
+                    "facet_weights": facet_weights or {},
+                    "excluded_memory_types": sorted(exclude_types),
+                    "recent": lines,
+                    "supplemental_recent": lines,
+                    "dedupe": {"enabled": dedupe == "on", "caller_session_id": caller_session_id},
+                    "instruction": "Use this as supplemental prior context. In supplement mode, assume the external agent already sees the live recent dialogue; do not duplicate it unless you need mode='full'.",
+                })
+            elif compact_result.compacted:
+                result["maintenance"] = {"compacted": True, "memory_id": compact_result.memory_id}
+            return result
         if name == "task.list":
             result = self.app.capability_executor.execute(CapabilityRequest("task_list", self.caller, args))
             return _result_dict(result)
@@ -222,6 +279,56 @@ class RuntimeToolBridge:
                     return {"ok": True, "event": None, "timeout": True}
                 time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
         raise KeyError(f"unknown runtime tool: {name}")
+
+
+
+    def _compact_memory_dict(self, hit, *, include_content: bool, content_max_chars: int) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "memory_id": hit.memory_id,
+            "type": hit.type,
+            "summary": hit.summary,
+            "updated_at_ms": hit.updated_at_ms,
+            "importance": hit.importance,
+            "confidence": hit.confidence,
+        }
+        if include_content:
+            content = hit.content or ""
+            data["content"] = content[:content_max_chars]
+            data["content_truncated"] = len(content) > content_max_chars
+        return data
+
+    def _profile_hints(self, *, scope: str, session_id: str, caller_session_id: str, limit: int, dedupe: str) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        seen = self.app.injection_ledger.seen_ids(session_id, caller_session_id, "profile_hint") if dedupe == "on" else set()
+        rows = self.app.db.query_all(
+            """SELECT id, type, summary, importance, confidence, source_strength, updated_at_ms, metadata_json
+            FROM memory_items
+            WHERE scope=? AND status='active' AND type IN ('user_trait','preference','workflow_habit')
+              AND confidence>=0.8 AND importance>=0.6
+              AND source_strength NOT IN ('assistant_output','wrapper_inference')
+            ORDER BY importance DESC, confidence DESC, updated_at_ms DESC
+            LIMIT ?""",
+            (scope, max(limit * 4, limit)),
+        )
+        hints: list[dict[str, Any]] = []
+        used_keys: set[str] = set()
+        for row in rows:
+            metadata = {}
+            if row["metadata_json"]:
+                try:
+                    import json
+                    metadata = json.loads(row["metadata_json"])
+                except Exception:
+                    metadata = {}
+            profile_key = str(metadata.get("profile_key") or metadata.get("kind") or row["id"])
+            if profile_key in seen or profile_key in used_keys:
+                continue
+            used_keys.add(profile_key)
+            hints.append({"profile_key": profile_key, "hint": row["summary"], "updated_at_ms": int(row["updated_at_ms"])})
+            if len(hints) >= limit:
+                break
+        return hints
 
 
 def _result_dict(result: CapabilityResult) -> dict[str, Any]:

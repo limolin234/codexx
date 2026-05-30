@@ -17,12 +17,24 @@ user/session/task content
   `MemoryService`, not just vector IDs/summaries.
 - `PromptBuilder.main_decision()` injects both summary and bounded memory content
   into the main-agent prompt.
-- MCP `context_get` defaults to `mode="supplement"` for external Codex-style
-  agents: it skips the live recent tail that Codex likely already sees and
-  returns only older supplemental session lines plus vector memory hits. Use
-  `mode="full"` when a caller explicitly needs the complete bounded view.
-  These are the only valid modes; callers must not send legacy values such as
-  `brief`.
+- MCP `context_get` defaults to `mode="supplement"` and `view="compact"` for
+  external Codex-style agents. Compact results return `context_lines`,
+  `profile_hints`, and summary-only `memories`; debug fields such as scores,
+  labels, excluded types, and duplicate-skip details are returned only with
+  `view="debug"`. Use `mode="full"` when a caller explicitly needs the complete
+  bounded view. These are the only valid modes; callers must not send legacy
+  values such as `brief`.
+- Runtime injection dedupe is handled inside the wrapper by
+  `session_injection_ledger`. The ledger records stable ids for items actually
+  returned by `context_get` (`memory_id`, profile key, context line id), then
+  suppresses repeat injection in the same caller session. This is an injection
+  hygiene mechanism, not semantic memory deduplication.
+- `profile_hints` are a separate compact capsule selected deterministically from
+  active high-confidence `user_trait` / `preference` / `workflow_habit` records.
+  `context_get` does not block on memory/profile models to generate them; model
+  maintenance updates profile records asynchronously for later calls. Profile
+  records are excluded from ordinary `memories` by default so user traits do not
+  randomly pollute task-memory retrieval.
 
 ## Replacement / compaction
 

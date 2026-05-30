@@ -308,6 +308,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
   facets
 );
 
+CREATE TABLE IF NOT EXISTS session_injection_ledger (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  caller_session_id TEXT NOT NULL DEFAULT '',
+  item_kind TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  item_version TEXT,
+  source_tool TEXT NOT NULL,
+  injected_at_ms INTEGER NOT NULL,
+  UNIQUE(session_id, caller_session_id, item_kind, item_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at_ms);
 CREATE INDEX IF NOT EXISTS idx_stream_request_seq ON interaction_streams(request_id, seq);
 CREATE INDEX IF NOT EXISTS idx_tasks_session_updated ON tasks(session_id, updated_at_ms);
@@ -315,4 +327,5 @@ CREATE INDEX IF NOT EXISTS idx_task_output_task_seq ON task_output_chunks(task_i
 CREATE INDEX IF NOT EXISTS idx_control_status_priority ON control_commands(status, priority, created_at_ms);
 CREATE INDEX IF NOT EXISTS idx_memory_scope_type ON memory_items(scope, type, status);
 CREATE INDEX IF NOT EXISTS idx_memory_facets_name ON memory_facets(facet_name, memory_id);
+CREATE INDEX IF NOT EXISTS idx_injection_ledger_session ON session_injection_ledger(session_id, caller_session_id, item_kind);
 """

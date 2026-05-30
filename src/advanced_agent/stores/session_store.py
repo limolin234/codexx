@@ -160,19 +160,15 @@ class SessionStore:
             for row in rows
         ]
 
-    def session_context_lines(self, session_id: str, include_compacted: bool = False, limit: int | None = None) -> list[str]:
-        """Return user-visible dialogue lines for prompt context.
+    def session_context_items(self, session_id: str, include_compacted: bool = False, limit: int | None = None) -> list[dict]:
+        """Return user-visible dialogue items with stable ids for injection dedupe."""
 
-        Messages store user input. Interaction streams store assistant-visible
-        outputs. For prompt continuity, main needs both; otherwise it may claim
-        it cannot see earlier replies even though they are in SQLite.
-        """
         message_where = "session_id=?" if include_compacted else "session_id=? AND compacted=0"
         params: tuple = (session_id, session_id)
         sql = f"""
-        SELECT created_at_ms, 'user' AS role, content AS text FROM messages WHERE {message_where}
+        SELECT id, created_at_ms, 'user' AS role, content AS text FROM messages WHERE {message_where}
         UNION ALL
-        SELECT created_at_ms, 'assistant' AS role, delta AS text FROM interaction_streams
+        SELECT id, created_at_ms, 'assistant' AS role, delta AS text FROM interaction_streams
         WHERE session_id=? AND authority='authoritative'
         {'' if include_compacted else "AND request_id IN (SELECT request_id FROM messages WHERE session_id=? AND compacted=0)"}
         ORDER BY created_at_ms
@@ -183,7 +179,25 @@ class SessionStore:
         elif not include_compacted:
             params = (session_id, session_id, session_id)
         rows = self.db.query_all(sql, params)
-        return [f"{row['role']}: {row['text']}" for row in rows]
+        return [
+            {
+                "id": row["id"],
+                "created_at_ms": int(row["created_at_ms"]),
+                "role": row["role"],
+                "text": row["text"],
+                "line": f"{row['role']}: {row['text']}",
+            }
+            for row in rows
+        ]
+
+    def session_context_lines(self, session_id: str, include_compacted: bool = False, limit: int | None = None) -> list[str]:
+        """Return user-visible dialogue lines for prompt context.
+
+        Messages store user input. Interaction streams store assistant-visible
+        outputs. For prompt continuity, main needs both; otherwise it may claim
+        it cannot see earlier replies even though they are in SQLite.
+        """
+        return [item["line"] for item in self.session_context_items(session_id, include_compacted=include_compacted, limit=limit)]
 
     def uncompacted_char_count(self, session_id: str) -> int:
         row = self.db.query_one("SELECT COALESCE(SUM(LENGTH(content)),0) AS total FROM messages WHERE session_id=? AND compacted=0", (session_id,))

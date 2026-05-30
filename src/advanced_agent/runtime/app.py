@@ -9,6 +9,7 @@ from advanced_agent.agents.main import MainAgent
 from advanced_agent.audit import AuditAgent
 from advanced_agent.events import EventBus, EventStore
 from advanced_agent.health import HealthChecker
+from advanced_agent.injection_ledger import InjectionLedger
 from advanced_agent.interrupts import InterruptGate
 from advanced_agent.automation import AutomationEngine
 from advanced_agent.capabilities import BackendRegistry, CapabilityRouter
@@ -75,6 +76,7 @@ class RuntimeApp:
     codex_worker: CodexTaskWorker
     events: EventBus
     health: HealthChecker
+    injection_ledger: InjectionLedger
     workspace: WorkspaceState
     background_requests: dict[str, asyncio.Task]
     completed_background: dict[str, object]
@@ -96,6 +98,7 @@ class RuntimeApp:
         event_store = EventStore(db)
         events = EventBus(event_store, time)
         health = HealthChecker(db)
+        injection_ledger = InjectionLedger(db, time)
         sessions = SessionStore(db)
         tasks = TaskStore(db)
         decisions = MainDecisionStore(db)
@@ -129,7 +132,7 @@ class RuntimeApp:
         task_summary_worker = TaskSummaryWorker(tasks, time)
         memory_maintenance = MemoryMaintenanceWorker(sessions, memory, preferences, time)
         automation = AutomationEngine(hooks, preferences, events, time, compactor=compactor, memory_indexer=memory_indexer, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance)
-        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, interactive=interactive, main=main, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, decisions=decisions, profiles=profiles, overlays=overlays, preferences=preferences, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, workspace=workspace, background_requests={}, completed_background={})
+        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, interactive=interactive, main=main, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, decisions=decisions, profiles=profiles, overlays=overlays, preferences=preferences, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, injection_ledger=injection_ledger, workspace=workspace, background_requests={}, completed_background={})
 
     def create_session(self, title: str) -> str:
         session_id = self.sessions.create_session(title=title, now_ms=self.time.wall_ms())

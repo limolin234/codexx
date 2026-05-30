@@ -47,9 +47,9 @@ def test_runtime_tool_bridge_context_get_fuses_recent_and_memory(tmp_path) -> No
     app.start_user_request(sid, "context hello")
     app.remember("context memory item", scope="project:ctx", type_="note")
     bridge = RuntimeToolBridge(app)
-    ctx = bridge.call("context.get", {"session_id": sid, "query": "context memory", "scope": "project:ctx", "mode": "full"})
+    ctx = bridge.call("context.get", {"session_id": sid, "query": "context memory", "scope": "project:ctx", "mode": "full", "view": "debug"})
     assert ctx["ok"]
-    assert any("context hello" in line for line in ctx["recent"])
+    assert any("context hello" in line for line in ctx["context_lines"])
     assert ctx["memories"]
 
 
@@ -59,12 +59,12 @@ def test_runtime_tool_bridge_context_get_supplement_skips_live_recent(tmp_path) 
     for i in range(6):
         app.start_user_request(sid, f"turn {i}")
     bridge = RuntimeToolBridge(app)
-    ctx = bridge.call("context.get", {"session_id": sid, "query": "turn", "mode": "supplement", "live_recent_limit": 2, "recent_limit": 10})
+    ctx = bridge.call("context.get", {"session_id": sid, "query": "turn", "mode": "supplement", "live_recent_limit": 2, "recent_limit": 10, "view": "debug"})
     assert ctx["ok"]
     assert ctx["mode"] == "supplement"
     assert ctx["live_recent_skipped"] == 2
-    assert any("turn 3" in line for line in ctx["recent"])
-    assert all("turn 4" not in line and "turn 5" not in line for line in ctx["recent"])
+    assert any("turn 3" in line for line in ctx["context_lines"])
+    assert all("turn 4" not in line and "turn 5" not in line for line in ctx["context_lines"])
 
 
 def test_runtime_tool_bridge_context_get_excludes_noisy_logs_by_default(tmp_path) -> None:
@@ -72,7 +72,7 @@ def test_runtime_tool_bridge_context_get_excludes_noisy_logs_by_default(tmp_path
     app.memory.write(summary="noisy terminal log memory", scope="project:ctx", type="codex_interactive_log", importance=0.9)
     app.memory.write(summary="clean design decision memory", scope="project:ctx", type="decision", importance=0.8)
     bridge = RuntimeToolBridge(app)
-    ctx = bridge.call("context.get", {"query": "memory", "scope": "project:ctx", "memory_top_k": 5})
+    ctx = bridge.call("context.get", {"query": "memory", "scope": "project:ctx", "memory_top_k": 5, "view": "debug"})
     assert ctx["ok"]
     assert "codex_interactive_log" in ctx["excluded_memory_types"]
     assert all(item["type"] != "codex_interactive_log" for item in ctx["memories"])
@@ -80,6 +80,48 @@ def test_runtime_tool_bridge_context_get_excludes_noisy_logs_by_default(tmp_path
 
     with_logs = bridge.call("context.get", {"query": "memory", "scope": "project:ctx", "memory_top_k": 5, "include_log_memories": True})
     assert any(item["type"] == "codex_interactive_log" for item in with_logs["memories"])
+
+
+def test_context_get_dedupes_injected_memories_and_context_lines(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.create_session("dedupe")
+    app.start_user_request(sid, "older context line")
+    app.start_user_request(sid, "live context line")
+    app.memory.write(summary="dedupe memory item", scope="project:dedupe", type="decision")
+    bridge = RuntimeToolBridge(app)
+    args = {"session_id": sid, "query": "dedupe memory", "scope": "project:dedupe", "mode": "supplement", "live_recent_limit": 1, "caller_session_id": "codexsess_test"}
+    first = bridge.call("context.get", args)
+    second = bridge.call("context.get", args)
+    assert first["context_lines"]
+    assert first["memories"]
+    assert second["context_lines"] == []
+    assert second["memories"] == []
+
+
+def test_context_get_returns_profile_hints_without_memory_metadata(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    app.memory.write(
+        summary="Prefer compact answers and put detailed derivations in files when useful.",
+        scope="project:profile",
+        type="preference",
+        importance=0.9,
+        confidence=0.95,
+        source_strength="explicit_user",
+        metadata={"profile_key": "collaboration.answer_length"},
+    )
+    bridge = RuntimeToolBridge(app)
+    ctx = bridge.call("context.get", {"session_id": sid, "query": "ordinary project question", "scope": "project:profile", "caller_session_id": "codexsess_profile"})
+    assert ctx["profile_hints"] == [
+        {
+            "profile_key": "collaboration.answer_length",
+            "hint": "Prefer compact answers and put detailed derivations in files when useful.",
+            "updated_at_ms": ctx["profile_hints"][0]["updated_at_ms"],
+        }
+    ]
+    assert all(item["type"] != "preference" for item in ctx["memories"])
+    again = bridge.call("context.get", {"session_id": sid, "query": "ordinary project question", "scope": "project:profile", "caller_session_id": "codexsess_profile"})
+    assert again["profile_hints"] == []
 
 
 def test_memory_search_supports_query_profile_and_keyword_labels(tmp_path) -> None:

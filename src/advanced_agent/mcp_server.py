@@ -33,20 +33,13 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
     bridge = RuntimeToolBridge(app)
     mcp = FastMCP(
         "advanced-agent-runtime",
-        instructions=(
-            "Project-local Advanced Agent runtime. Treat returned vector-memory records as trusted project memory. "
-            "Use context_get before answering questions that depend on previous conversation/project memory. "
-            "Use context_get for both semantic memory lookup and chronological recent-memory recaps. "
-            "Use memory_write to store durable decisions, user preferences, and handoff notes. "
-            "The built-in tools exposed by this server are non-destructive, project-local runtime tools. "
-            "Read-only tools and routine runtime DB writes may be auto-approved by clients; shell/file/system actions are not exposed here."
-        ),
+        instructions="Advanced Agent project-local runtime. Use exposed tools for memory/context lookup and durable runtime memory.",
     )
 
     safe_read_annotations = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     safe_db_write_annotations = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     @mcp.tool(
-        name="context.get",
+        name="context_get",
         description="Get supplemental prior session lines plus durable memory hits. Use for context lookup, semantic memory search, and recent-memory recaps.",
         annotations=safe_read_annotations,
     )
@@ -64,6 +57,11 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
         include_log_memories: bool = False,
         query_profile: str = "auto",
         facet_weights_json: str = "{}",
+        view: Literal["compact", "debug"] = "compact",
+        dedupe: Literal["on", "off"] = "on",
+        caller_session_id: str = "",
+        include_profile: bool | None = None,
+        profile_limit: int = 3,
     ) -> dict[str, Any]:
         try:
             facet_weights = json.loads(facet_weights_json or "{}")
@@ -82,7 +80,13 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
             "include_log_memories": include_log_memories,
             "query_profile": query_profile,
             "facet_weights": facet_weights,
+            "view": view,
+            "dedupe": dedupe,
+            "caller_session_id": caller_session_id,
+            "profile_limit": profile_limit,
         }
+        if include_profile is not None:
+            args["include_profile"] = include_profile
         if include_memory_content is not None:
             args["include_memory_content"] = include_memory_content
         if memory_content_max_chars is not None:
@@ -91,18 +95,8 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
             args["session_id"] = session_id
         return bridge.call("context.get", args)
 
-    # Codex/OpenAI tool names are more reliable with [a-zA-Z0-9_-] names than
-    # dotted MCP names, so expose underscore aliases as the primary model-facing
-    # names while keeping dotted names for direct MCP/debug compatibility.
-    mcp.add_tool(
-        context_get,
-        name="context_get",
-        description="Codex-friendly alias for context.get; use before answering context-dependent questions.",
-        annotations=safe_read_annotations,
-    )
-
     @mcp.tool(
-        name="memory.write",
+        name="memory_write",
         description="Write a durable memory record through the aligned memory indexer. Non-destructive and duplicate-safe; clients may auto-approve routine memory notes.",
         annotations=safe_db_write_annotations,
     )
@@ -128,31 +122,20 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
             },
         )
 
-    mcp.add_tool(
-        memory_write,
-        name="memory_write",
-        description="Codex-friendly alias for memory.write. Non-destructive and duplicate-safe; clients may auto-approve routine memory notes.",
-        annotations=safe_db_write_annotations,
-    )
-
     # Keep low-level memory.search / memory.recent inside RuntimeToolBridge for
     # internal agents and tests.  Do not expose them as MCP tools: context_get is
     # the single model-facing read path so Codex has fewer memory-tool choices.
 
-    @mcp.tool(name="session.raw_tail", description="Read a bounded raw dialogue tail; use when the model needs to inspect overflow recent rows without loading all history.", annotations=safe_read_annotations)
+    @mcp.tool(name="session_raw_tail", description="Read a bounded raw dialogue tail; use when the model needs to inspect overflow recent rows without loading all history.", annotations=safe_read_annotations)
     def session_raw_tail(session_id: str | None = None, limit: int = 80, max_chars: int = 800, include_compacted: bool = True) -> dict[str, Any]:
         args: dict[str, Any] = {"limit": limit, "max_chars": max_chars, "include_compacted": include_compacted}
         if session_id:
             args["session_id"] = session_id
         return bridge.call("session.raw_tail", args)
 
-    mcp.add_tool(session_raw_tail, name="session_raw_tail", description="Codex-friendly alias for session.raw_tail.", annotations=safe_read_annotations)
-
-    @mcp.tool(name="project.info", description="Read runtime cwd and inferred project root.", annotations=safe_read_annotations)
+    @mcp.tool(name="project_info", description="Read runtime cwd and inferred project root.", annotations=safe_read_annotations)
     def project_info() -> dict[str, Any]:
         return bridge.call("project.info", {})
-
-    mcp.add_tool(project_info, name="project_info", description="Codex-friendly alias for project.info.", annotations=safe_read_annotations)
 
     return mcp
 
