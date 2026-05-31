@@ -15,6 +15,7 @@ import time
 import tomllib
 import tty
 from dataclasses import dataclass
+from types import FrameType
 from pathlib import Path
 
 from advanced_agent import defaults
@@ -22,6 +23,12 @@ from advanced_agent.hooks import HookKind
 from advanced_agent.runtime.app import RuntimeApp
 from advanced_agent.runtime.background import BackgroundRuntimeQueue
 from advanced_agent.models import Message, new_id
+
+
+class _WrapperSignalExit(Exception):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(signum)
 
 
 @dataclass(slots=True)
@@ -327,7 +334,14 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_
     def _handle_winch(*_: object) -> None:
         _copy_winsize(sys.stdin.fileno(), master_fd)
 
-    old_handler = signal.signal(signal.SIGWINCH, _handle_winch)
+    def _handle_exit_signal(signum: int, _frame: FrameType | None) -> None:
+        raise _WrapperSignalExit(signum)
+
+    old_handlers: dict[int, signal.Handlers] = {
+        signal.SIGWINCH: signal.signal(signal.SIGWINCH, _handle_winch),
+    }
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        old_handlers[sig] = signal.signal(sig, _handle_exit_signal)
     last_child_cwd: str | None = None
     last_child_cwd_poll = 0.0
 
@@ -357,38 +371,11 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_
         # escape sequences like "^[[C" as literal text after Enter.
         tty.setraw(sys.stdin.fileno())
         with log_path.open("ab") as log:
-            while True:
-                _poll_child_cwd()
-                readable, _, _ = select.select([sys.stdin.fileno(), master_fd], [], [], 0.25)
-                if master_fd in readable:
-                    try:
-                        data = os.read(master_fd, 4096)
-                    except OSError:
-                        break
-                    if not data:
-                        break
-                    os.write(sys.stdout.fileno(), data)
-                    log.write(data)
-                    log.flush()
-                if sys.stdin.fileno() in readable:
-                    data = os.read(sys.stdin.fileno(), 4096)
-                    if not data:
-                        break
-                    if b"\x03" in data:
-                        log.write(b"\n[WRAPPER_CTRL_C_INTERRUPTED]\n")
-                        log.flush()
-                        _terminate_process_group(proc)
-                        return 130
-                    os.write(master_fd, data)
-                    log.write(b"\n[USER_INPUT_BYTES]\n")
-                    log.write(data)
-                    log.flush()
-                if proc.poll() is not None:
-                    # Drain remaining PTY output if any.
-                    while True:
-                        readable, _, _ = select.select([master_fd], [], [], 0)
-                        if not readable:
-                            break
+            try:
+                while True:
+                    _poll_child_cwd()
+                    readable, _, _ = select.select([sys.stdin.fileno(), master_fd], [], [], 0.25)
+                    if master_fd in readable:
                         try:
                             data = os.read(master_fd, 4096)
                         except OSError:
@@ -397,41 +384,93 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_
                             break
                         os.write(sys.stdout.fileno(), data)
                         log.write(data)
-                    break
+                        log.flush()
+                    if sys.stdin.fileno() in readable:
+                        data = os.read(sys.stdin.fileno(), 4096)
+                        if not data:
+                            break
+                        if b"\x03" in data:
+                            log.write(b"\n[WRAPPER_CTRL_C_INTERRUPTED]\n")
+                            log.flush()
+                            _terminate_process_group(proc, first_signal=signal.SIGINT)
+                            _drain_pty_output(master_fd, log)
+                            return 130
+                        os.write(master_fd, data)
+                        log.write(b"\n[USER_INPUT_BYTES]\n")
+                        log.write(data)
+                        log.flush()
+                    if proc.poll() is not None:
+                        _drain_pty_output(master_fd, log)
+                        break
+            except _WrapperSignalExit as exc:
+                signame = signal.Signals(exc.signum).name.encode("ascii", errors="replace")
+                log.write(b"\n[WRAPPER_" + signame + b"_INTERRUPTED]\n")
+                log.flush()
+                first_signal = signal.SIGINT if exc.signum == signal.SIGINT else signal.SIGTERM
+                _terminate_process_group(proc, first_signal=first_signal)
+                _drain_pty_output(master_fd, log)
+                return 128 + exc.signum
+            except KeyboardInterrupt:
+                log.write(b"\n[WRAPPER_KEYBOARD_INTERRUPTED]\n")
+                log.flush()
+                _terminate_process_group(proc, first_signal=signal.SIGINT)
+                _drain_pty_output(master_fd, log)
+                return 130
     finally:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_tty_attrs)
-        signal.signal(signal.SIGWINCH, old_handler)
+        for sig, handler in old_handlers.items():
+            signal.signal(sig, handler)
         os.close(master_fd)
     return proc.wait()
 
 
-def _terminate_process_group(proc: subprocess.Popen) -> None:
-    """Stop the wrapped Codex process promptly on wrapper-level Ctrl+C."""
+def _drain_pty_output(master_fd: int, log) -> None:
+    while True:
+        readable, _, _ = select.select([master_fd], [], [], 0)
+        if not readable:
+            break
+        try:
+            data = os.read(master_fd, 4096)
+        except OSError:
+            break
+        if not data:
+            break
+        os.write(sys.stdout.fileno(), data)
+        log.write(data)
+    log.flush()
+
+
+def _terminate_process_group(proc: subprocess.Popen, first_signal: signal.Signals = signal.SIGINT) -> None:
+    """Stop the wrapped Codex process promptly before wrapper shutdown."""
 
     if proc.poll() is not None:
         return
     try:
-        os.killpg(proc.pid, signal.SIGINT)
+        os.killpg(proc.pid, first_signal)
     except ProcessLookupError:
         return
     except OSError:
-        proc.terminate()
+        if first_signal == signal.SIGINT:
+            proc.send_signal(signal.SIGINT)
+        else:
+            proc.terminate()
     try:
         proc.wait(timeout=1.0)
         return
     except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    except OSError:
-        proc.terminate()
-    try:
-        proc.wait(timeout=1.0)
-        return
-    except subprocess.TimeoutExpired:
-        pass
+    if first_signal != signal.SIGTERM:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError:
+            proc.terminate()
+        try:
+            proc.wait(timeout=1.0)
+            return
+        except subprocess.TimeoutExpired:
+            pass
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
