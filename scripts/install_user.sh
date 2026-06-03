@@ -50,18 +50,26 @@ run() {
 }
 
 ensure_venv() {
-  if [ -x "$ROOT/.venv/bin/python" ]; then
+  if [ -s "$ROOT/.venv/bin/python" ] && "$ROOT/.venv/bin/python" -c 'import sys' >/dev/null 2>&1; then
     return
   fi
-  run "$PYTHON_BIN" -m venv "$ROOT/.venv"
+  if [ -e "$ROOT/.venv" ]; then
+    echo "repairing broken virtualenv: $ROOT/.venv" >&2
+  fi
+  run "$PYTHON_BIN" -m venv --copies --clear "$ROOT/.venv"
+  if [ "$DRY_RUN" -eq 0 ] && ! "$ROOT/.venv/bin/python" -c 'import sys' >/dev/null 2>&1; then
+    echo "failed to create a working virtualenv: $ROOT/.venv" >&2
+    exit 1
+  fi
 }
 
 install_deps() {
   if [ "$WITH_DEPS" -eq 0 ]; then
     return
   fi
-  run "$ROOT/.venv/bin/python" -m pip install -U pip
-  run "$ROOT/.venv/bin/python" -m pip install -e "$ROOT"
+  run "$ROOT/.venv/bin/python" -m ensurepip --upgrade
+  run "$ROOT/.venv/bin/python" -m pip --default-timeout 120 --retries 10 install "setuptools>=40.8.0" wheel
+  run "$ROOT/.venv/bin/python" -m pip --default-timeout 120 --retries 10 install -e "$ROOT"
 }
 
 link_launcher() {
@@ -71,7 +79,11 @@ link_launcher() {
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     local target
     target="$(readlink -f "$dst" || true)"
-    if [ "$target" != "$src" ] && [ "$FORCE" -ne 1 ]; then
+    local generated_wrapper=0
+    if [ -f "$dst" ] && grep -Fxq "exec bash \"$src\" \"\$@\"" "$dst"; then
+      generated_wrapper=1
+    fi
+    if [ "$target" != "$src" ] && [ "$generated_wrapper" -ne 1 ] && [ "$FORCE" -ne 1 ]; then
       echo "refuse to replace existing $dst -> ${target:-not-a-symlink}; pass --force to replace" >&2
       exit 1
     fi
