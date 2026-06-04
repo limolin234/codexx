@@ -5,22 +5,26 @@ project easier to run.
 
 ## User PATH symlinks
 
-Created symlinks in the user's local bin directory:
+Default install creates one launcher in the user's local bin directory:
 
 ```text
 ~/.local/bin/codexx -> <project>/bin/codexx
-~/.local/bin/advanced-agent-mcp -> <project>/bin/advanced-agent-mcp
-~/.local/bin/advanced-agentd -> <project>/bin/advanced-agentd
 ```
 
 Purpose:
 
 - `codexx`: start enhanced interactive Codex without manually activating venv; it preserves the caller's current directory as Codex's open/work location.
-- `advanced-agent-mcp`: run the project-local MCP server.
-- `advanced-agentd`: run the long-running deterministic runtime daemon.
 
-These are user-level symlinks only. No global system files, shell rc files, or
-root-owned paths were intentionally modified.
+The MCP server and daemon entry points remain project-local/.venv-local
+implementation details. They are not added to `~/.local/bin` by default.
+
+This is a user-level launcher only. No global system files, shell rc files,
+`~/.codex/config.toml`, or root-owned paths are intentionally modified. If
+`~/.local/bin` is not already on `PATH`, the user may choose to add:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
 ## Project-local generated launchers
 
@@ -50,7 +54,7 @@ Use:
 bash scripts/remove_system_changes.sh
 ```
 
-By default it removes only the user-level symlinks in `~/.local/bin` that point
-back to this project. Use `--project-local` if you also want to remove generated
-project launcher scripts under `bin/` and `.venv/bin/`, including `codexx`,
-`advanced-agent-mcp`, and `advanced-agentd`.
+By default it removes the user-level `~/.local/bin/codexx` launcher when it
+points back to this project. Use `--project-local` if you also want to remove
+generated project launcher scripts under `bin/` and `.venv/bin/`, including
+`codexx`, `advanced-agent-mcp`, and `advanced-agentd`.

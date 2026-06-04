@@ -20,12 +20,65 @@ codexx
 
 `codexx` 会自动使用本项目的 `.venv`，不需要手动激活虚拟环境。
 
+## 安装与系统要求
+
+推荐在 Linux 上使用：
+
+- Linux shell 环境；
+- Codex CLI 已安装，并且 `codex` 在 `PATH` 中；
+- Python `>= 3.11`，且可创建 venv；
+- pip 可安装依赖。
+
+本项目的 Python 依赖安装在项目内 `.venv/`，不会安装到系统 Python。
+当前依赖见 `pyproject.toml`：
+
+- `httpx>=0.27`
+- `mcp>=1.27`
+- `sqlite-vec>=0.1.9`
+
+首次安装：
+
+```bash
+cp .env.example.json .env.json
+bash scripts/install_user.sh
+```
+
+安装脚本会：
+
+1. 创建/修复项目内 `.venv`；
+2. 把本项目以 editable 方式安装到 `.venv`；
+3. 在项目目录外只创建一个用户级入口：
+
+```text
+~/.local/bin/codexx
+```
+
+如果 shell 找不到 `codexx`，把用户本地 bin 加入 `PATH`：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+可以把上面一行放进 `~/.bashrc` / `~/.zshrc`。除此之外，默认安装不修改
+shell rc、`~/.codex/config.toml`、`/usr/bin` 或其他系统目录。
+
+卸载用户级入口：
+
+```bash
+bash scripts/remove_system_changes.sh
+```
+
+## 运行时环境边界
+
 `codexx` 使用一个默认配置文件 `.env.json`，并自动设置项目内运行时环境变量：
 
 - `ADVANCED_AGENT_DB=runtime/advanced_agent.sqlite`
 - `ADVANCED_AGENT_CONFIG=.env.json`
 - `ADVANCED_AGENT_SCOPE=project:advanced_agent`
 - `ADVANCED_AGENT_MEMORY_TRUST=high`
+
+这些环境变量只在 `codexx` 启动的子进程内临时设置；普通 shell 不需要全局
+export `ADVANCED_AGENT_*`。
 
 它会启动 Codex，并自动注入项目级 MCP server，让 Codex 能调用
 `context_get`、`memory_write`、`session_raw_tail`、`project_info` 等记忆/上下文工具。

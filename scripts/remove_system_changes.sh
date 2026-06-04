@@ -9,10 +9,11 @@ usage() {
   cat <<EOF
 Usage: bash scripts/remove_system_changes.sh [--project-local] [--dry-run]
 
-Removes user-level symlinks created by this project:
+Removes user-level launchers created by this project:
   ~/.local/bin/codexx
-  ~/.local/bin/advanced-agent-mcp
-  ~/.local/bin/advanced-agentd
+
+It also removes legacy advanced-agent-mcp / advanced-agentd launchers when they
+point back to this project.
 
 Options:
   --project-local  also remove generated project launchers under bin/ and .venv/bin/
@@ -29,14 +30,24 @@ for arg in "$@"; do
   esac
 done
 
-remove_if_project_symlink() {
+remove_if_project_launcher() {
   local path="$1"
+  local src="$2"
   if [ ! -e "$path" ] && [ ! -L "$path" ]; then
     echo "skip missing: $path"
     return
   fi
+  if [ -f "$path" ] && grep -Fxq "exec bash \"$src\" \"\$@\"" "$path"; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "would remove: $path -> bash $src"
+    else
+      rm -f "$path"
+      echo "removed: $path -> bash $src"
+    fi
+    return
+  fi
   if [ ! -L "$path" ]; then
-    echo "skip not symlink: $path"
+    echo "skip not project launcher: $path"
     return
   fi
   local target
@@ -75,9 +86,9 @@ remove_project_file() {
   esac
 }
 
-remove_if_project_symlink "$HOME/.local/bin/codexx"
-remove_if_project_symlink "$HOME/.local/bin/advanced-agent-mcp"
-remove_if_project_symlink "$HOME/.local/bin/advanced-agentd"
+remove_if_project_launcher "$HOME/.local/bin/codexx" "$ROOT/bin/codexx"
+remove_if_project_launcher "$HOME/.local/bin/advanced-agent-mcp" "$ROOT/bin/advanced-agent-mcp"
+remove_if_project_launcher "$HOME/.local/bin/advanced-agentd" "$ROOT/bin/advanced-agentd"
 
 if [ "$REMOVE_PROJECT_LOCAL" -eq 1 ]; then
   remove_project_file "$ROOT/bin/codexx"

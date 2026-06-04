@@ -12,19 +12,17 @@ usage() {
   cat <<EOF
 Usage: bash scripts/install_user.sh [--no-deps] [--force] [--dry-run]
 
-Install Advanced Agent user-level launchers:
+Install the Advanced Agent user-level launcher:
   codexx
-  advanced-agent-mcp
-  advanced-agentd
 
 Actions:
   1. create .venv if missing (requires Python 3.11+)
   2. install this project into .venv by default
-  3. create symlinks under ~/.local/bin
+  3. create ~/.local/bin/codexx
 
 Options:
   --no-deps   skip pip install step
-  --force     replace existing ~/.local/bin entries even if not symlinks to this project
+  --force     replace existing ~/.local/bin/codexx even if it is not from this project
   --dry-run   print actions only
 EOF
 }
@@ -129,19 +127,53 @@ EOF
   fi
 }
 
+remove_legacy_launcher() {
+  local name="$1"
+  local path="$BIN_DIR/$name"
+  local src="$ROOT/bin/$name"
+  if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+    return
+  fi
+  if [ -f "$path" ] && grep -Fxq "exec bash \"$src\" \"\$@\"" "$path"; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "would remove legacy launcher: $path -> bash $src"
+    else
+      rm -f "$path"
+      echo "removed legacy launcher: $path -> bash $src"
+    fi
+    return
+  fi
+  local target
+  target="$(readlink -f "$path" || true)"
+  case "$target" in
+    "$ROOT"/*)
+      if [ "$DRY_RUN" -eq 1 ]; then
+        echo "would remove legacy launcher: $path -> $target"
+      else
+        rm -f "$path"
+        echo "removed legacy launcher: $path -> $target"
+      fi
+      ;;
+  esac
+}
+
 run mkdir -p "$BIN_DIR"
 ensure_venv
 install_deps
 link_launcher codexx
-link_launcher advanced-agent-mcp
-link_launcher advanced-agentd
+remove_legacy_launcher advanced-agent-mcp
+remove_legacy_launcher advanced-agentd
 
 cat <<EOF
-Installed Advanced Agent launchers under $BIN_DIR
+Installed Advanced Agent launcher:
+  $BIN_DIR/codexx
 
 Verify:
   codexx --help
 
 If codexx is not found, add this to your shell rc:
   export PATH="\$HOME/.local/bin:\$PATH"
+
+Only ~/.local/bin/codexx is installed outside this project. The MCP server and
+daemon entry points remain project-local/.venv-local implementation details.
 EOF
