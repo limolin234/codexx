@@ -4,7 +4,6 @@ import argparse
 import fcntl
 import os
 import pty
-import re
 import select
 import signal
 import struct
@@ -24,6 +23,8 @@ from advanced_agent.hooks import HookKind
 from advanced_agent.runtime.app import RuntimeApp
 from advanced_agent.runtime.background import BackgroundRuntimeConfig, BackgroundRuntimeQueue
 from advanced_agent.models import Message, new_id
+from advanced_agent.terminal_semantics import BoundedCleanTerminalLog as _BoundedCleanTerminalLog
+from advanced_agent.terminal_semantics import GenericTtyInputTracker, SemanticChunk, SemanticRingBuffer, clean_terminal_text
 
 
 class _WrapperSignalExit(Exception):
@@ -41,6 +42,9 @@ class CodexInteractiveSession:
 
 
 DEFAULT_BOOTSTRAP_CHARS = 0
+DEFAULT_CODEX_LOG_SESSION_RETENTION = 32
+DEFAULT_CODEX_LOG_MAX_BYTES = 5 * 1024 * 1024
+DEFAULT_SEMANTIC_RING_BYTES = 1024 * 1024
 
 
 CODEXX_RUNTIME_INSTRUCTIONS_FALLBACK = """# codexx runtime instructions
@@ -334,18 +338,30 @@ def run_interactive_codex(
     print(startup_status_line(config_path, background_config=background_config))
     background_runtime = BackgroundRuntimeQueue(app, config=background_config)
     background_runtime.start()
+    semantic_ring = SemanticRingBuffer(DEFAULT_SEMANTIC_RING_BYTES)
+    input_tracker = GenericTtyInputTracker()
     returncode = -1
     try:
-        returncode = _run_pty(command, build_codex_env(app, session_id, db_path, log_path, project_root_path), log_path, child_cwd_callback=lambda cwd: app.chdir(str(cwd)))
+        returncode = _run_pty(
+            command,
+            build_codex_env(app, session_id, db_path, log_path, project_root_path),
+            log_path,
+            child_cwd_callback=lambda cwd: app.chdir(str(cwd)),
+            semantic_input_callback=lambda data: _record_semantic_input(app, session_id, semantic_ring, input_tracker, data),
+            semantic_output_callback=lambda data: _record_semantic_output(app, session_id, semantic_ring, data),
+        )
     finally:
+        _record_semantic_event(app, session_id, semantic_ring, SemanticChunk(kind="session_close", text=f"codex wrapper closed with returncode={returncode}", payload={"returncode": returncode}), schedule_reason="session_close", force_schedule=True)
         _record_codex_close_event(app, session_id, codex_session_id, log_path, returncode)
         _append_codex_log_tail_to_ring_buffer(app, session_id, codex_session_id, log_path)
         _enqueue_codex_close_maintenance(app, session_id, codex_session_id, log_path, returncode)
+        _enqueue_semantic_maintenance(app, session_id, reason="session_close", force=True)
+        _prune_codex_interactive_logs(app, log_root, keep_sessions=DEFAULT_CODEX_LOG_SESSION_RETENTION)
         background_runtime.stop()
     return CodexInteractiveSession(session_id=session_id, codex_session_id=codex_session_id, log_path=log_path, returncode=returncode)
 
 
-def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_callback=None) -> int:
+def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_callback=None, semantic_input_callback=None, semantic_output_callback=None) -> int:
     master_fd, slave_fd = pty.openpty()
     _copy_winsize(sys.stdin.fileno(), slave_fd)
     proc = subprocess.Popen(command, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, env=env, close_fds=True, start_new_session=True)
@@ -391,7 +407,7 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_
         # otherwise arrows/control keys are line-buffered and Codex receives
         # escape sequences like "^[[C" as literal text after Enter.
         tty.setraw(sys.stdin.fileno())
-        with log_path.open("ab") as log:
+        with _BoundedCleanTerminalLog(log_path, max_bytes=DEFAULT_CODEX_LOG_MAX_BYTES) as log:
             try:
                 while True:
                     _poll_child_cwd()
@@ -405,6 +421,8 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_
                             break
                         os.write(sys.stdout.fileno(), data)
                         log.write(data)
+                        if semantic_output_callback is not None:
+                            semantic_output_callback(data)
                         log.flush()
                     if sys.stdin.fileno() in readable:
                         data = os.read(sys.stdin.fileno(), 4096)
@@ -413,12 +431,16 @@ def _run_pty(command: list[str], env: dict[str, str], log_path: Path, child_cwd_
                         if b"\x03" in data:
                             log.write(b"\n[WRAPPER_CTRL_C_INTERRUPTED]\n")
                             log.flush()
+                            if semantic_input_callback is not None:
+                                semantic_input_callback(b"\n")
                             _terminate_process_group(proc, first_signal=signal.SIGINT)
                             _drain_pty_output(master_fd, log)
                             return 130
                         os.write(master_fd, data)
                         log.write(b"\n[USER_INPUT_BYTES]\n")
                         log.write(data)
+                        if semantic_input_callback is not None:
+                            semantic_input_callback(data)
                         log.flush()
                     if proc.poll() is not None:
                         _drain_pty_output(master_fd, log)
@@ -504,6 +526,48 @@ def _terminate_process_group(proc: subprocess.Popen, first_signal: signal.Signal
         return
 
 
+def _record_semantic_input(app: RuntimeApp, session_id: str, ring: SemanticRingBuffer, tracker: GenericTtyInputTracker, data: bytes) -> None:
+    for chunk in tracker.observe(data):
+        _record_semantic_event(app, session_id, ring, chunk, schedule_reason="user_submit")
+
+
+def _record_semantic_output(app: RuntimeApp, session_id: str, ring: SemanticRingBuffer, data: bytes) -> None:
+    cleaned = clean_terminal_text(data.decode("utf-8", errors="replace"), max_chars=None)
+    if not cleaned.strip():
+        return
+    _record_semantic_event(app, session_id, ring, SemanticChunk(kind="cleaned_tty_chunk", text=cleaned, payload={"source": "tty_output"}), schedule_reason="buffer_threshold")
+
+
+def _record_semantic_event(app: RuntimeApp, session_id: str, ring: SemanticRingBuffer, chunk: SemanticChunk, *, schedule_reason: str, force_schedule: bool = False) -> None:
+    event = app.semantic_store.append_event(
+        session_id=session_id,
+        kind=chunk.kind,
+        text=chunk.text,
+        payload=chunk.payload,
+        now_ms=app.time.wall_ms(),
+    )
+    if event is None:
+        return
+    ring.append(chunk)
+    if force_schedule:
+        _enqueue_semantic_maintenance(app, session_id, reason=schedule_reason, force=True)
+        return
+    if chunk.kind == "user_submit" and app.semantic_store.unconsumed_user_submits(session_id) >= 3:
+        _enqueue_semantic_maintenance(app, session_id, reason="user_submit_3", force=False)
+    elif app.semantic_store.active_bytes(session_id) >= 768 * 1024:
+        _enqueue_semantic_maintenance(app, session_id, reason=schedule_reason, force=False)
+
+
+def _enqueue_semantic_maintenance(app: RuntimeApp, session_id: str, *, reason: str, force: bool = False) -> None:
+    app.hooks.ensure_unique(
+        HookKind.SEMANTIC_MAINTENANCE,
+        target=f"semantic:{session_id}",
+        now_ms=app.time.wall_ms(),
+        delay_ms=0,
+        payload={"session_id": session_id, "scope": defaults.default_scope(), "reason": reason, "force": force},
+    )
+
+
 def _record_codex_close_event(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, returncode: int) -> None:
     app.events.publish(
         "codex.interactive.closed",
@@ -515,6 +579,71 @@ def _record_codex_close_event(app: RuntimeApp, session_id: str, codex_session_id
             "returncode": returncode,
         },
     )
+
+
+def _prune_codex_interactive_logs(app: RuntimeApp, log_root: Path, keep_sessions: int = DEFAULT_CODEX_LOG_SESSION_RETENTION) -> int:
+    """Keep only the newest per-Codex-session diagnostic files.
+
+    `runtime/codex_interactive` stores one terminal transcript plus one generated
+    model-instructions file for each wrapper launch.  Those files are diagnostic
+    overflow data, not the bounded raw-tail cache, so prune them by session to
+    avoid unbounded filesystem growth.
+    """
+
+    keep_sessions = max(0, int(keep_sessions))
+    try:
+        files = [path for path in log_root.iterdir() if path.is_file()]
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return 0
+
+    sessions: dict[str, list[Path]] = {}
+    prefix = "codexsess_"
+    for path in files:
+        name = path.name
+        if not name.startswith(prefix):
+            continue
+        if name.endswith(".terminal.log"):
+            session_name = name[: -len(".terminal.log")]
+        elif name.endswith(".instructions.md"):
+            session_name = name[: -len(".instructions.md")]
+        else:
+            continue
+        sessions.setdefault(session_name, []).append(path)
+
+    if len(sessions) <= keep_sessions:
+        return 0
+
+    def session_mtime(item: tuple[str, list[Path]]) -> float:
+        _session_name, paths = item
+        latest = 0.0
+        for path in paths:
+            try:
+                latest = max(latest, path.stat().st_mtime)
+            except OSError:
+                continue
+        return latest
+
+    newest = sorted(sessions.items(), key=session_mtime, reverse=True)
+    stale_sessions = newest[keep_sessions:]
+    deleted = 0
+    for _session_name, paths in stale_sessions:
+        for path in paths:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+            deleted += 1
+    if deleted:
+        app.events.publish(
+            "codex.interactive.logs_pruned",
+            "codex_wrapper",
+            {"log_root": str(log_root), "keep_sessions": keep_sessions, "deleted_files": deleted},
+        )
+    return deleted
 
 
 def _enqueue_codex_close_maintenance(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, returncode: int) -> None:
@@ -540,28 +669,8 @@ def _copy_winsize(src_fd: int, dst_fd: int) -> None:
         return
 
 
-ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
-
-
-def _clean_terminal_log(text: str, max_chars: int = 6000) -> str:
-    cleaned = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", text)
-    cleaned = ANSI_RE.sub("", cleaned)
-    cleaned = cleaned.replace("\r", "\n")
-    cleaned = re.sub(r"\n?\[USER_INPUT_BYTES\]\n?", "\n", cleaned)
-    cleaned = re.sub(r"(?:\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b.|\x0f|\x0e|\x07)", "", cleaned)
-    cleaned = re.sub(r"0;[⠇⠏⠋⠙⠹⠸⠼⠴⠦⠧] [^\n]{0,120}", "", cleaned)
-    lines = []
-    blank = False
-    for line in cleaned.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            if not blank:
-                lines.append("")
-            blank = True
-            continue
-        blank = False
-        lines.append(stripped)
-    return "\n".join(lines)[-max_chars:]
+def _clean_terminal_log(text: str, max_chars: int | None = 6000) -> str:
+    return clean_terminal_text(text, max_chars=max_chars)
 
 
 def _append_codex_log_tail_to_ring_buffer(app: RuntimeApp, session_id: str, codex_session_id: str, log_path: Path, max_chars: int = 120_000) -> None:

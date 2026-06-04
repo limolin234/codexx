@@ -1,8 +1,10 @@
+import os
 from pathlib import Path
 
-from advanced_agent.codex_interactive import DEFAULT_BOOTSTRAP_CHARS, _append_codex_log_tail_to_ring_buffer, _append_codex_tail_to_ring_buffer, _clean_terminal_log, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, build_combined_model_instructions, codex_mcp_config_args, should_inject_bootstrap, startup_status_line
+from advanced_agent.codex_interactive import DEFAULT_BOOTSTRAP_CHARS, DEFAULT_CODEX_LOG_SESSION_RETENTION, _BoundedCleanTerminalLog, _append_codex_log_tail_to_ring_buffer, _append_codex_tail_to_ring_buffer, _clean_terminal_log, _prune_codex_interactive_logs, _record_semantic_event, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, build_combined_model_instructions, codex_mcp_config_args, should_inject_bootstrap, startup_status_line
 from advanced_agent.runtime.background import BackgroundRuntimeConfig
 from advanced_agent.runtime.app import RuntimeApp
+from advanced_agent.terminal_semantics import GenericTtyInputTracker, SemanticChunk, SemanticRingBuffer
 
 
 def test_codex_interactive_env_contains_runtime_handles(tmp_path) -> None:
@@ -76,6 +78,45 @@ def test_clean_terminal_log_removes_ansi_noise() -> None:
     assert "\x1b" not in cleaned
 
 
+def test_clean_terminal_log_treats_carriage_return_as_overwrite() -> None:
+    cleaned = _clean_terminal_log("progress 1%\rprogress 2%\rprogress 3%")
+    assert "progress 3%" in cleaned
+    assert "progress 1%" not in cleaned
+
+
+def test_generic_tty_input_tracker_extracts_user_submit() -> None:
+    tracker = GenericTtyInputTracker()
+    chunks = tracker.observe("默认写到 tmp.md".encode("utf-8") + b"\r")
+    assert len(chunks) == 1
+    assert chunks[0].kind == "user_submit"
+    assert chunks[0].text == "默认写到 tmp.md"
+
+
+def test_bounded_clean_terminal_log_writes_clean_capped_transcript(tmp_path) -> None:
+    log_path = tmp_path / "codexsess_test.terminal.log"
+    with _BoundedCleanTerminalLog(log_path, max_bytes=200) as log:
+        log.write(("\x1b[31mfirst noisy line\x1b[0m\n" + "x" * 300).encode())
+        log.write(b"\n[USER_INPUT_BYTES]\n")
+        log.write("\x1b[32m用户偏好：保留清洗后的日志\x1b[0m\n".encode())
+
+    text = log_path.read_text(encoding="utf-8")
+    assert "\x1b" not in text
+    assert "[USER_INPUT_BYTES]" not in text
+    assert len(log_path.read_bytes()) <= 200
+    assert "用户偏好" in text
+
+
+def test_semantic_event_record_schedules_after_three_user_submits(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.default_session()
+    ring = SemanticRingBuffer()
+    for idx in range(3):
+        _record_semantic_event(app, sid, ring, SemanticChunk(kind="user_submit", text=f"message {idx}"), schedule_reason="user_submit")
+    assert app.semantic_store.unconsumed_user_submits(sid) == 3
+    due = app.hooks.due(app.time.wall_ms(), limit=5)
+    assert any(hook.kind == "semantic_maintenance" and hook.payload["reason"] == "user_submit_3" for hook in due)
+
+
 def test_codex_log_tail_buffers_raw_tail_without_durable_memory(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.default_session()
@@ -118,6 +159,37 @@ def test_build_bootstrap_prompt_includes_bounded_recent_tail(tmp_path) -> None:
 
 def test_default_bootstrap_is_quiet_and_raw_tail_is_opt_in() -> None:
     assert DEFAULT_BOOTSTRAP_CHARS == 0
+
+
+def test_prune_codex_interactive_logs_keeps_newest_sessions(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    log_root = tmp_path / "codex_interactive"
+    log_root.mkdir()
+    for i in range(35):
+        sid = f"codexsess_{i:02d}"
+        for suffix in (".terminal.log", ".instructions.md"):
+            path = log_root / f"{sid}{suffix}"
+            path.write_text(sid, encoding="utf-8")
+            ts = 1_700_000_000 + i
+            os.utime(path, (ts, ts))
+    unrelated = log_root / "README.txt"
+    unrelated.write_text("keep me", encoding="utf-8")
+
+    deleted = _prune_codex_interactive_logs(app, log_root, keep_sessions=DEFAULT_CODEX_LOG_SESSION_RETENTION)
+
+    assert deleted == 6
+    remaining_sessions = {
+        path.name.split(".")[0]
+        for path in log_root.glob("codexsess_*.*")
+    }
+    assert len(remaining_sessions) == DEFAULT_CODEX_LOG_SESSION_RETENTION
+    assert "codexsess_00" not in remaining_sessions
+    assert "codexsess_01" not in remaining_sessions
+    assert "codexsess_02" not in remaining_sessions
+    assert "codexsess_03" in remaining_sessions
+    assert unrelated.exists()
+    events = app.events.store.recent(5)
+    assert any(event.type == "codex.interactive.logs_pruned" for event in events)
 
 
 def test_combined_model_instructions_preserve_user_and_add_codexx_contract(tmp_path) -> None:

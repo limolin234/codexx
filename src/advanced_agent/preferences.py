@@ -78,14 +78,24 @@ class PreferenceWorker:
 
     def _recent_user_evidence(self, session_id: str) -> list[ProfileEvidence]:
         rows = self.sessions.db.query_all(
-            "SELECT id, content FROM messages WHERE session_id=? AND role='user' ORDER BY created_at_ms DESC LIMIT ?",
+            "SELECT id, role, content FROM messages WHERE session_id=? AND role IN ('user','codex_tail') ORDER BY created_at_ms DESC LIMIT ?",
             (session_id, self.limits.recent_evidence_limit),
         )
         evidence: list[ProfileEvidence] = []
         for row in reversed(rows):
             text = str(row["content"]).strip()
             if text:
-                evidence.append(ProfileEvidence(text=text, message_id=row["id"], source_strength=MemoryEvidenceSource.USER_BEHAVIOR))
+                role = str(row["role"])
+                if role == "codex_tail":
+                    text = (
+                        "[cleaned_codex_terminal_tail: mixed transcript; may include assistant/tool output. "
+                        "Use only clearly user-originated preference/correction/workflow statements as profile evidence.]\n"
+                        + text
+                    )
+                    source_strength = MemoryEvidenceSource.WRAPPER_INFERENCE
+                else:
+                    source_strength = MemoryEvidenceSource.USER_BEHAVIOR
+                evidence.append(ProfileEvidence(text=text, message_id=row["id"], source_strength=source_strength))
         return evidence
 
     def _existing_traits(self, scope: str) -> list[MemoryRecord]:

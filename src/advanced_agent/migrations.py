@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from advanced_agent.stores.schema import SCHEMA_SQL
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 @dataclass(slots=True)
@@ -47,6 +47,8 @@ class MigrationRunner:
                 self._migrate_to_v5()
             if current < 6:
                 self._migrate_to_v6()
+            if current < 7:
+                self._migrate_to_v7()
             self._set_version(CURRENT_SCHEMA_VERSION)
             upgraded = True
             current = CURRENT_SCHEMA_VERSION
@@ -221,6 +223,92 @@ class MigrationRunner:
             )"""
         )
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_injection_ledger_session ON session_injection_ledger(session_id, caller_session_id, item_kind)")
+
+    def _migrate_to_v7(self) -> None:
+        """Add cleaned TTY semantic event buffers, summaries, and task state."""
+
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS semantic_events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT NOT NULL,
+            payload_json TEXT,
+            content_hash TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            compacted INTEGER NOT NULL DEFAULT 0,
+            consumed_by_small_ms INTEGER,
+            consumed_by_big_ms INTEGER,
+            UNIQUE(session_id, seq),
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )"""
+        )
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS semantic_summaries (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            from_seq INTEGER NOT NULL,
+            to_seq INTEGER NOT NULL,
+            summary TEXT NOT NULL,
+            source_hash TEXT NOT NULL,
+            model_name TEXT,
+            prompt_version TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )"""
+        )
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS semantic_tasks (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            from_seq INTEGER NOT NULL,
+            to_seq INTEGER NOT NULL,
+            input_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            locked_at_ms INTEGER,
+            started_at_ms INTEGER,
+            finished_at_ms INTEGER,
+            error TEXT,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(session_id, kind, from_seq, to_seq, input_hash),
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )"""
+        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_events_session_seq ON semantic_events(session_id, seq)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_events_active ON semantic_events(session_id, compacted, seq)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_tasks_status ON semantic_tasks(status, updated_at_ms)")
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS semantic_memory_candidates (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            summary_id TEXT NOT NULL,
+            candidate_type TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            content TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            evidence_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            importance REAL NOT NULL,
+            confidence REAL NOT NULL,
+            approved_memory_id TEXT,
+            model_name TEXT,
+            error TEXT,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(summary_id, candidate_type, evidence_hash),
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )"""
+        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_candidates_status ON semantic_memory_candidates(status, updated_at_ms)")
 
     def _merge_text(self, left: str | None, right: str | None) -> str:
         parts = []

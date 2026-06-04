@@ -2,6 +2,7 @@ import json
 
 from advanced_agent.runtime.app import RuntimeApp
 from advanced_agent.llm import ChatMessage, ChatResponse, ToolCall
+from advanced_agent.models import Message
 from advanced_agent.profile.writer import MajorModelMemoryWriter
 from advanced_agent.profile.observer import LLMProfileMaintainer
 
@@ -242,3 +243,25 @@ def test_small_model_observer_without_major_writer_does_not_write_durable_trait(
 
     assert model.calls
     assert app.memory.recent(scope="project:no-major", type="user_trait", limit=5) == []
+
+
+def test_profile_maintenance_uses_cleaned_codex_tail_as_wrapper_evidence(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    model = FakeProfileModel({"patches": []})
+    app.preferences.maintainer = LLMProfileMaintainer(model)  # type: ignore[arg-type]
+    sid = app.create_session("profile-codex-tail")
+    app.sessions.append_message(Message(
+        session_id=sid,
+        request_id="codex-close-test",
+        role="codex_tail",
+        content="用户明确说：以后默认把推导写到 tmp.md",
+        created_at_ms=app.time.wall_ms(),
+    ))
+
+    app.preferences.update_from_session(sid, scope="project:profile-codex-tail")
+
+    assert model.calls
+    user_payload = model.calls[0][1].content
+    assert user_payload is not None
+    assert "cleaned_codex_terminal_tail" in user_payload
+    assert "wrapper_inference" in user_payload

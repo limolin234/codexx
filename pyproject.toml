@@ -1,6 +1,6 @@
 [project]
 name = "advanced-agent"
-version = "0.1.2"
+version = "0.1.3"
 description = "A local memory/runtime wrapper for Codex and other external agent clients."
 requires-python = ">=3.11"
 dependencies = [

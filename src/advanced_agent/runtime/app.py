@@ -22,6 +22,7 @@ from advanced_agent.memory_alignment import LLMMemoryAlignment
 from advanced_agent.profile.writer import MajorModelMemoryWriter
 from advanced_agent.memory_service import MemoryService
 from advanced_agent.memory_maintenance import MemoryMaintenanceWorker
+from advanced_agent.semantic_worker import SemanticMaintenanceWorker
 from advanced_agent.models import Message, new_id
 from advanced_agent.processes import AsyncSubprocessRunner
 from advanced_agent.preferences import PreferenceWorker
@@ -31,6 +32,7 @@ from advanced_agent.stores.audit_store import AuditStore, ControlStore
 from advanced_agent.stores.hook_store import HookStore
 from advanced_agent.stores.profile_store import ProfileStore, PromptOverlayStore
 from advanced_agent.stores.session_store import SessionStore
+from advanced_agent.stores.semantic_store import SemanticStore
 from advanced_agent.stores.sqlite_store import SQLiteStore
 from advanced_agent.stores.task_store import TaskStore
 from advanced_agent.supervisor import Supervisor
@@ -66,6 +68,8 @@ class RuntimeApp:
     automation: AutomationEngine
     task_summary_worker: TaskSummaryWorker
     memory_maintenance: MemoryMaintenanceWorker
+    semantic_store: SemanticStore
+    semantic_maintenance: SemanticMaintenanceWorker
     process_runner: AsyncSubprocessRunner
     codex_worker: CodexTaskWorker
     events: EventBus
@@ -92,6 +96,7 @@ class RuntimeApp:
         health = HealthChecker(db)
         injection_ledger = InjectionLedger(db, time)
         sessions = SessionStore(db)
+        semantic_store = SemanticStore(db)
         tasks = TaskStore(db)
         profiles = ProfileStore(db)
         overlays = PromptOverlayStore(db)
@@ -120,8 +125,9 @@ class RuntimeApp:
         compactor = ConversationCompactor(sessions, vectors, alignment, time, memory_indexer=memory_indexer)
         task_summary_worker = TaskSummaryWorker(tasks, time)
         memory_maintenance = MemoryMaintenanceWorker(sessions, memory, preferences, time)
-        automation = AutomationEngine(hooks, preferences, events, time, compactor=compactor, memory_indexer=memory_indexer, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance)
-        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, profiles=profiles, overlays=overlays, preferences=preferences, profile_hints=profile_hints, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, injection_ledger=injection_ledger, workspace=workspace)
+        semantic_maintenance = SemanticMaintenanceWorker(semantic_store, time, router.client_for("memory_model"), memory=memory, approval_model=router.client_for("memory_write_model"))
+        automation = AutomationEngine(hooks, preferences, events, time, compactor=compactor, memory_indexer=memory_indexer, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, semantic_maintenance=semantic_maintenance)
+        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, profiles=profiles, overlays=overlays, preferences=preferences, profile_hints=profile_hints, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, semantic_store=semantic_store, semantic_maintenance=semantic_maintenance, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, injection_ledger=injection_ledger, workspace=workspace)
 
     def create_session(self, title: str) -> str:
         session_id = self.sessions.create_session(title=title, now_ms=self.time.wall_ms())

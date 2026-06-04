@@ -7,6 +7,7 @@ from advanced_agent.hooks import HookKind, HookScheduler, HookSpec
 from advanced_agent.compaction import ConversationCompactor
 from advanced_agent.memory_indexer import MemoryCandidate, MemoryIndexer
 from advanced_agent.memory_maintenance import MemoryMaintenanceWorker
+from advanced_agent.semantic_worker import SemanticMaintenanceWorker
 from advanced_agent.preferences import PreferenceWorker
 from advanced_agent.stores.hook_store import HookStore
 from advanced_agent.task_summary_worker import TaskSummaryWorker
@@ -26,7 +27,7 @@ class AutomationEngine:
     engine owns the actual scheduling and triggering.
     """
 
-    def __init__(self, hooks: HookStore, preferences: PreferenceWorker, events: EventBus, time: TimeService, compactor: ConversationCompactor | None = None, memory_indexer: MemoryIndexer | None = None, task_summary_worker: TaskSummaryWorker | None = None, memory_maintenance: MemoryMaintenanceWorker | None = None) -> None:
+    def __init__(self, hooks: HookStore, preferences: PreferenceWorker, events: EventBus, time: TimeService, compactor: ConversationCompactor | None = None, memory_indexer: MemoryIndexer | None = None, task_summary_worker: TaskSummaryWorker | None = None, memory_maintenance: MemoryMaintenanceWorker | None = None, semantic_maintenance: SemanticMaintenanceWorker | None = None) -> None:
         self.hooks = hooks
         self.preferences = preferences
         self.events = events
@@ -35,6 +36,7 @@ class AutomationEngine:
         self.memory_indexer = memory_indexer
         self.task_summary_worker = task_summary_worker
         self.memory_maintenance = memory_maintenance
+        self.semantic_maintenance = semantic_maintenance
         self.backoff = HookScheduler(time)
 
     def ensure_session_maintenance(self, session_id: str, scope: str = "project:advanced_agent", idle_ms: int = 0) -> str:
@@ -127,6 +129,21 @@ class AutomationEngine:
                 limit=int(hook.payload.get("limit", 200)),
             )
             return f"memory_maintenance:profile={result.profile_id or '-'}:archived={result.archived_indexes}:purged={result.purged_deleted}:pruned={result.pruned_raw_rows}"
+        if hook.kind == HookKind.SEMANTIC_MAINTENANCE:
+            if self.semantic_maintenance is None:
+                return "semantic_maintenance_not_configured"
+            session_id = hook.payload.get("session_id")
+            scope = hook.payload.get("scope", "project:advanced_agent")
+            if not session_id:
+                return "semantic_maintenance_skipped_missing_session"
+            result = self.semantic_maintenance.run(
+                session_id=session_id,
+                scope=scope,
+                reason=hook.payload.get("reason", "scheduled"),
+                force=bool(hook.payload.get("force", False)),
+                limit=int(hook.payload.get("limit", 10)),
+            )
+            return f"semantic_maintenance:created={result.tasks_created}:processed={result.tasks_processed}:summaries={result.summaries_created}:candidates={result.candidates_created}/{result.candidates_processed}:memories={result.memories_written}:reason={result.reason}"
         if hook.kind == HookKind.RAW_RETENTION:
             if self.memory_maintenance is None:
                 return "raw_retention_not_configured"
