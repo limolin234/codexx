@@ -40,7 +40,7 @@ bin/codexx
 On a new machine, run from the project root:
 
 ```bash
-bash scripts/install_user.sh
+bash scripts/install.sh
 ```
 
 The installer creates `.venv` if needed, installs the project into it, and
@@ -58,7 +58,7 @@ machine-specific absolute path.
 Skip dependency installation when the venv is already prepared:
 
 ```bash
-bash scripts/install_user.sh --no-deps
+bash scripts/install.sh --no-deps
 ```
 
 The wrapper then injects the local MCP server into Codex with temporary `-c`

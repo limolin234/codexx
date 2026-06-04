@@ -8,14 +8,11 @@ EXPECTED_SRC="$ROOT/bin/codexx"
 
 usage() {
   cat <<EOF
-Usage: bash scripts/remove_system_changes.sh
+Usage: bash scripts/remove_guidance.sh
 
-Conservative uninstall helper for the user-level launcher:
-  ~/.local/bin/codexx
-
-This script does not delete files automatically. It verifies whether the
-launcher appears to be this project's generated wrapper, prints sha256 evidence,
-and then prints the exact manual rm command if removal is safe.
+Checks only ~/.local/bin/codexx.
+Prints a safe manual rm command when it matches this project.
+Does not delete files automatically.
 EOF
 }
 
@@ -62,14 +59,8 @@ sha256_stdin() {
 
 expected_hash="$(printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$EXPECTED_SRC" | sha256_stdin)"
 
-echo "Project root: $ROOT"
-echo "Expected launcher: $LAUNCHER"
-echo "Expected target: $EXPECTED_SRC"
-echo "Expected generated-wrapper sha256: $expected_hash"
-echo
-
 if [ ! -e "$LAUNCHER" ] && [ ! -L "$LAUNCHER" ]; then
-  echo "No user-level codexx launcher found at: $LAUNCHER"
+  echo "No launcher found: $LAUNCHER"
   exit 0
 fi
 
@@ -77,26 +68,27 @@ if [ -L "$LAUNCHER" ]; then
   target="$(readlink -f "$LAUNCHER" || true)"
   echo "Found symlink: $LAUNCHER -> ${target:-unresolved}"
   if [ "$target" = "$EXPECTED_SRC" ]; then
-    echo "Safe manual removal command:"
+    echo "Matches this project. To remove:"
     printf '  rm -i -- %q\n' "$LAUNCHER"
     exit 0
   fi
-  echo "Not this project's expected launcher; leaving it untouched."
+  echo "Not this project's launcher; leaving untouched."
   exit 1
 fi
 
 if [ -f "$LAUNCHER" ]; then
   actual_hash="$(sha256 "$LAUNCHER")"
   echo "Found file: $LAUNCHER"
-  echo "Actual sha256: $actual_hash"
   if [ "$actual_hash" = "$expected_hash" ]; then
-    echo "Safe manual removal command:"
+    echo "Matches this project. To remove:"
     printf '  rm -i -- %q\n' "$LAUNCHER"
     exit 0
   fi
-  echo "Hash does not match this project's generated wrapper; leaving it untouched."
+  echo "Hash mismatch; leaving untouched."
+  echo "expected: $expected_hash"
+  echo "actual:   $actual_hash"
   exit 1
 fi
 
-echo "Launcher exists but is neither a regular file nor symlink; leaving it untouched."
+echo "Launcher is not a regular file or symlink; leaving untouched."
 exit 1

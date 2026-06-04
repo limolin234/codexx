@@ -2018,7 +2018,7 @@ env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" codexx -
 已新增移除脚本：
 
 ```bash
-bash scripts/remove_system_changes.sh
+bash scripts/remove_guidance.sh
 ```
 
 默认只移除指向本项目的 `~/.local/bin` symlink；不会删除同名但不指向本项目的文件。
@@ -2026,13 +2026,13 @@ bash scripts/remove_system_changes.sh
 预览：
 
 ```bash
-bash scripts/remove_system_changes.sh --dry-run
+bash scripts/remove_guidance.sh --dry-run
 ```
 
 连项目内生成 launcher 一起删：
 
 ```bash
-bash scripts/remove_system_changes.sh --project-local
+bash scripts/remove_guidance.sh --project-local
 ```
 
 验证：
@@ -2449,7 +2449,7 @@ env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" codexx -
 
 新增：
 
-- `scripts/install_user.sh`
+- `scripts/install.sh`
 
 功能：
 
@@ -2473,7 +2473,7 @@ env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" codexx -
 验证：
 
 ```text
-bash scripts/install_user.sh --dry-run --no-deps
+bash scripts/install.sh --dry-run --no-deps
 bash bin/codexx --help
 .venv/bin/python -m pytest tests/core/test_migrations.py tests/core/test_runtime_tools.py tests/core/test_mcp_server.py tests/core/test_codex_interactive_wrapper.py tests/core/test_memory_alignment.py tests/integration/test_memory_indexer.py tests/integration/test_vectors_cli.py
 30 passed

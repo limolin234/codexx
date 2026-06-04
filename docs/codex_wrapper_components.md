@@ -111,7 +111,7 @@ memory ingestion.
   - MCP quickstart and debugging notes.
 - `docs/system_changes.md`
   - User/system-level changes and how to remove them.
-- `scripts/remove_system_changes.sh`
+- `scripts/remove_guidance.sh`
   - Removes user-level symlinks created for the project.
 
 ### Tests

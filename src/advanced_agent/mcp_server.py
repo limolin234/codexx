@@ -126,7 +126,7 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
     # internal agents and tests.  Do not expose them as MCP tools: context_get is
     # the single model-facing read path so Codex has fewer memory-tool choices.
 
-    @mcp.tool(name="session_raw_tail", description="Read a bounded raw dialogue tail; use when the model needs to inspect overflow recent rows without loading all history.", annotations=safe_read_annotations)
+    @mcp.tool(name="session_raw_tail", description="Read the bounded raw tail from prior/overflow dialogue. Use early in a new chat when the user asks to continue the last conversation or needs exact recent wording; rarely needed later after context_get/memory is enough.", annotations=safe_read_annotations)
     def session_raw_tail(session_id: str | None = None, limit: int = 80, max_chars: int = 800, include_compacted: bool = True) -> dict[str, Any]:
         args: dict[str, Any] = {"limit": limit, "max_chars": max_chars, "include_compacted": include_compacted}
         if session_id:

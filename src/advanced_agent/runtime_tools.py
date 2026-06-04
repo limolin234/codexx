@@ -315,7 +315,7 @@ _TOOL_SPECS = tuple(
         ("memory.purge_deleted", "Physically purge deleted memory tombstones older than a cutoff."),
         ("context.get", "Get supplemental prior session context plus vector memory hits for a query."),
         ("session.recent", "Read recent user-visible session context lines."),
-        ("session.raw_tail", "Read bounded raw dialogue tail as a ring-buffer-like overflow guard."),
+        ("session.raw_tail", "Read prior/overflow raw dialogue tail, mainly for early continuation from the last chat."),
         ("task.list", "List recent managed tasks."),
         ("task.state", "Read a managed task state."),
         ("task.tail", "Read recent task output."),

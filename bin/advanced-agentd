@@ -13,7 +13,7 @@ ROOT="$(cd -P "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 PY="$ROOT/.venv/bin/python"
 if [ ! -s "$PY" ] || ! "$PY" -c 'import sys' >/dev/null 2>&1; then
   echo "advanced-agentd: missing or broken project virtualenv: $PY" >&2
-  echo "advanced-agentd: run installer first: bash $ROOT/scripts/install_user.sh" >&2
+  echo "advanced-agentd: run installer first: bash $ROOT/scripts/install.sh" >&2
   exit 1
 fi
 cd "$ROOT"

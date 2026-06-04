@@ -51,7 +51,7 @@ These are inside the project and can be removed with the project if desired.
 Use:
 
 ```bash
-bash scripts/remove_system_changes.sh
+bash scripts/remove_guidance.sh
 ```
 
 The helper is intentionally non-destructive. It refuses to run as root/sudo,

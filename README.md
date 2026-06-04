@@ -40,7 +40,7 @@ codexx
 
 ```bash
 cp .env.example.json .env.json
-bash scripts/install_user.sh
+bash scripts/install.sh
 ```
 
 安装脚本会：
@@ -65,7 +65,7 @@ shell rc、`~/.codex/config.toml`、`/usr/bin` 或其他系统目录。
 查看并手动卸载用户级入口：
 
 ```bash
-bash scripts/remove_system_changes.sh
+bash scripts/remove_guidance.sh
 ```
 
 该脚本只校验 `~/.local/bin/codexx` 是否是本项目生成的 launcher，并打印

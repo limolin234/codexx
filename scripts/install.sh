@@ -15,7 +15,7 @@ fi
 
 usage() {
   cat <<EOF
-Usage: bash scripts/install_user.sh [--no-deps] [--dry-run]
+Usage: bash scripts/install.sh [--no-deps] [--dry-run]
 
 Install the Advanced Agent user-level launcher:
   codexx
