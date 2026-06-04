@@ -94,7 +94,7 @@ def test_memory_mark_used_updates_usage_metadata(tmp_path) -> None:
 def test_memory_maintenance_prunes_compacted_raw_and_updates_profile(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.create_session("maintenance")
-    request_id, _ = app.start_user_request(sid, "记忆和画像要自动维护")
+    request_id = app.record_user_message(sid, "记忆和画像要自动维护")
     msg = app.sessions.latest_message(sid, role="user")
     assert msg is not None
     app.sessions.mark_compacted_before(sid, msg.id)
@@ -163,7 +163,7 @@ def test_llm_profile_maintainer_writes_distilled_vector_trait(tmp_path) -> None:
     app.preferences.maintainer = LLMProfileMaintainer(model)  # type: ignore[arg-type]
     app.preferences.major_writer = MajorModelMemoryWriter(major)  # type: ignore[arg-type]
     sid = app.create_session("profile-model")
-    app.start_user_request(sid, "summary 只做第一次注入，真正复杂画像靠向量数据库维护")
+    app.record_user_message(sid, "summary 只做第一次注入，真正复杂画像靠向量数据库维护")
 
     profile_id = app.preferences.update_from_session(sid, scope="project:profile-model")
 
@@ -209,7 +209,7 @@ def test_llm_profile_maintainer_can_supersede_existing_trait(tmp_path) -> None:
     app.preferences.maintainer = LLMProfileMaintainer(model)  # type: ignore[arg-type]
     app.preferences.major_writer = MajorModelMemoryWriter(major)  # type: ignore[arg-type]
     sid = app.create_session("profile-model")
-    app.start_user_request(sid, "更新旧画像")
+    app.record_user_message(sid, "更新旧画像")
 
     app.preferences.update_from_session(sid, scope="project:profile-model")
 
@@ -236,7 +236,7 @@ def test_small_model_observer_without_major_writer_does_not_write_durable_trait(
     })
     app.preferences.maintainer = LLMProfileMaintainer(model)  # type: ignore[arg-type]
     sid = app.create_session("profile-model")
-    app.start_user_request(sid, "普通一句话")
+    app.record_user_message(sid, "普通一句话")
 
     app.preferences.update_from_session(sid, scope="project:no-major")
 

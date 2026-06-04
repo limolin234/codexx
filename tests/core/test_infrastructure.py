@@ -35,7 +35,7 @@ def test_runtime_health_and_events(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     assert app.health.check().ok
     sid = app.create_session("infra")
-    app.handle_user_text(sid, "hello", workdir=str(tmp_path))
+    app.record_user_message(sid, "hello")
     events = app.events.store.recent(10)
     assert any(event.type == "session.created" for event in events)
-    assert any(event.type == "main.decided" for event in events)
+    assert any(event.type == "external.user_message.recorded" for event in events)

@@ -19,9 +19,10 @@ from types import FrameType
 from pathlib import Path
 
 from advanced_agent import defaults
+from advanced_agent.config import RuntimeConfig
 from advanced_agent.hooks import HookKind
 from advanced_agent.runtime.app import RuntimeApp
-from advanced_agent.runtime.background import BackgroundRuntimeQueue
+from advanced_agent.runtime.background import BackgroundRuntimeConfig, BackgroundRuntimeQueue
 from advanced_agent.models import Message, new_id
 
 
@@ -90,6 +91,24 @@ def build_codex_env(app: RuntimeApp, session_id: str, db_path: str, log_path: Pa
         "ADVANCED_AGENT_MCP_HINT": "Use context_get for prior/project context; use memory_write for records and handoffs.",
     })
     return env
+
+
+def startup_status_line(config_path: str | Path | None = None, *, background_config: BackgroundRuntimeConfig | None = None) -> str:
+    """Return one safe startup line for wrapper-side model/profile readiness."""
+
+    cfg = RuntimeConfig.load(config_path)
+    parts: list[str] = []
+    all_ok = True
+    for role in ("memory_model", "memory_write_model"):
+        model = cfg.model_for_role(role)
+        ok = bool(model is not None and model.resolved_api_key())
+        all_ok = all_ok and ok
+        parts.append(f"{role}={'可用' if ok else '缺失'}")
+    bg = background_config or BackgroundRuntimeConfig.from_env()
+    profile_state = "已启动" if bg.enabled else "已关闭"
+    if bg.enabled and not all_ok:
+        profile_state = "已启动但模型受限"
+    return f"[advanced_agent] API key: {' '.join(parts)}；自动画像管理={profile_state}"
 
 
 def _package_project_root() -> Path:
@@ -311,7 +330,9 @@ def run_interactive_codex(
     if bootstrap_chars > 0 and should_inject_bootstrap(codex_args):
         codex_args = [*codex_args, build_bootstrap_prompt(app, session_id, max_chars=bootstrap_chars)]
     command = ["codex", *instruction_args, *injected_args, *codex_args]
-    background_runtime = BackgroundRuntimeQueue(app)
+    background_config = BackgroundRuntimeConfig.from_env()
+    print(startup_status_line(config_path, background_config=background_config))
+    background_runtime = BackgroundRuntimeQueue(app, config=background_config)
     background_runtime.start()
     returncode = -1
     try:

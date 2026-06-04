@@ -3,13 +3,12 @@ from advanced_agent.models import AgentRole, Authority, ControlCommand, TaskSpec
 from advanced_agent.runtime.app import RuntimeApp
 
 
-def test_interactive_then_main_authoritative(tmp_path) -> None:
+def test_record_user_message_does_not_run_internal_chat_agent(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     session_id = app.create_session("test")
-    request_id = app.handle_user_text(session_id, "讨论架构", workdir=str(tmp_path))
-    stream = app.sessions.stream_for_request(request_id)
-    assert [d.authority for d in stream] == [Authority.PROVISIONAL, Authority.AUTHORITATIVE]
-    assert stream[-1].supersedes_seq == stream[0].seq
+    request_id = app.record_user_message(session_id, "讨论架构")
+    assert app.sessions.message_for_request(session_id, request_id, role="user") is not None
+    assert app.sessions.stream_for_request(request_id) == []
 
 
 def test_supervisor_spawns_task_with_audit(tmp_path) -> None:
@@ -39,15 +38,13 @@ def test_user_interrupt_cooldown(tmp_path) -> None:
     assert not app.supervisor.request_task_control(task_id, ControlCommand.STOP, AgentRole.INTERACTIVE)
 
 
-def test_request_can_return_interactive_before_main(tmp_path) -> None:
+def test_record_user_message_schedules_maintenance(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     session_id = app.create_session("test")
-    request_id, quick = app.start_user_request(session_id, "hello")
-    assert quick.authority == Authority.PROVISIONAL
-    assert len(app.sessions.stream_for_request(request_id)) == 1
-    main = app.finish_user_request(session_id, request_id, workdir=str(tmp_path))
-    assert main.authority == Authority.AUTHORITATIVE
-    assert len(app.sessions.stream_for_request(request_id)) == 2
+    request_id = app.record_user_message(session_id, "hello")
+    assert app.sessions.message_for_request(session_id, request_id, role="user") is not None
+    rows = app.db.query_all("SELECT kind FROM runtime_hooks WHERE target=?", (f"session:{session_id}",))
+    assert {row["kind"] for row in rows} >= {"preference_maintenance", "compact_memory", "memory_maintenance"}
 
 
 def test_hook_scheduler_wakes_internally() -> None:

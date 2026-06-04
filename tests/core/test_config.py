@@ -6,7 +6,7 @@ from advanced_agent.config import RuntimeConfig
 def test_runtime_config_json_roles(tmp_path) -> None:
     path = tmp_path / "env.json"
     path.write_text(json.dumps({
-        "roles": {"interactive_model": "fast", "codex_model": "default"},
+        "roles": {"memory_model": "fast", "codex_model": "default"},
         "models": {
             "fast": {
                 "provider": "openai_compatible",
@@ -17,5 +17,5 @@ def test_runtime_config_json_roles(tmp_path) -> None:
         },
     }))
     cfg = RuntimeConfig.load(path)
-    assert cfg.model_for_role("interactive_model").model == "m-fast"
+    assert cfg.model_for_role("memory_model").model == "m-fast"
     assert cfg.model_for_role("codex_model") is None

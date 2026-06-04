@@ -6,13 +6,15 @@ Manual memory/profile maintenance is not realistic. Maintenance must be hook-dri
 
 Models can request hooks, but the runtime owns scheduling and execution.
 
-A hook usually wakes an internal component such as main-agent or preference-worker. It does not imply speaking to the user.
+A hook usually wakes an internal component such as the preference worker,
+memory indexer, compactor, or task summary worker. It does not imply speaking
+to the user or running an internal chat agent.
 
 ## Current automated path
 
 ```text
-user message
-  -> RuntimeApp.start_user_request
+external agent/user evidence
+  -> RuntimeApp.record_user_message or wrapper close/maintenance hook
   -> HookStore.ensure_unique(PREFERENCE_MAINTENANCE, session)
   -> AutomationEngine.tick
   -> PreferenceWorker.update_from_session

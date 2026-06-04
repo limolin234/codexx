@@ -1,5 +1,4 @@
 from advanced_agent.models import AgentRole, Authority, Message, StreamDelta, TaskSpec
-from advanced_agent.orchestrator import demo
 from advanced_agent.supervisor import WorkerSpec
 
 
@@ -25,13 +24,6 @@ def test_stream_delta_authority() -> None:
         timestamp_ms=1,
     )
     assert delta.id.startswith("delta_")
-
-
-def test_demo_flow() -> None:
-    stream = demo("讨论架构")
-    assert len(stream) == 2
-    assert stream[0].authority == Authority.PROVISIONAL
-    assert stream[1].authority == Authority.AUTHORITATIVE
 
 
 def test_worker_spec_has_id() -> None:

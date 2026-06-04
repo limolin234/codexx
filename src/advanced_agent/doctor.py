@@ -49,7 +49,7 @@ class Doctor:
         cfg = RuntimeConfig.load(self.config_path)
         checks["config_load"] = True
         details["config_load"] = "ok" if self.config_path is None or Path(self.config_path).exists() else "missing; using defaults"
-        for role in ("interactive_model", "main_model", "audit_model"):
+        for role in ("memory_model", "memory_write_model"):
             model = cfg.model_for_role(role)
             if model is None:
                 checks[f"{role}_configured"] = False

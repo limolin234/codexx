@@ -1,8 +1,14 @@
-# Advanced Agent
+# Advanced Agent / codexx
 
-一个面向本地计算机管理与高效交流的 agent 架构原型。目标是做成类似 OpenClaw 的本地智能控制层，但更强调清晰边界、可迁移架构、可观察性和长期可维护性。
+面向 Codex（以及未来 Claude 等外部 agent）的本地 runtime / memory wrapper。
 
-当前阶段已完成第一版可运行骨架：SQLite schema、上下文接口、supervisor、interrupt gate、audit agent mock、interactive/main agent mock。后续可接入语音输入、本地 NPU 模型、向量数据库、记忆维护模型、真实 OpenAI/本地模型后端和 Codex task worker。
+项目当前定位不是独立聊天 agent，而是给外部模型客户端提供：
+
+- 项目级 MCP 工具；
+- SQLite-backed durable memory；
+- bounded raw tail / session context；
+- profile hints 和后台维护；
+- Codex PTY wrapper 与日志/退出维护。
 
 ## 推荐入口
 
@@ -22,16 +28,14 @@ codexx
 - `ADVANCED_AGENT_MEMORY_TRUST=high`
 
 它会启动 Codex，并自动注入项目级 MCP server，让 Codex 能调用
-`context_get`、`memory_write`、`memory_search` 等记忆/上下文工具。
+`context_get`、`memory_write`、`session_raw_tail`、`project_info` 等记忆/上下文工具。
 
 ## 核心思想
 
-- **主 Agent 负责判断和思想反馈**：由强模型承担状态判断、总体策略、任务拆分、风险控制和与用户的关键沟通。
-- **快速缓冲层负责低延迟交互**：小模型/轻量策略层夹在用户和主 Agent 之间，处理确认、澄清、临时反馈、等待提示，并允许用户或主 Agent 随时打断。
-- **Fork 型任务 Agent 负责复杂执行**：主 Agent 可以把自身上下文裁剪后 fork 成任务态 agent，专心完成复杂任务，避免污染主循环上下文。
-- **记忆不是聊天记录堆积**：用廉价但价值对齐的记忆维护模型，对对话和任务结果分段、摘要、打标签，再写入向量库和结构化索引。
-- **本地优先，边缘可迁移**：I/O、模型、记忆库、工具执行全部通过接口隔离，方便从桌面迁移到边缘设备。
-- **主进程监督子进程**：主进程作为 supervisor 拉起 fast buffer、task agent、memory worker、voice worker、tool executor，并负责中断、重启和动态模块更新。
+- **外部 agent 为语义主体**：Codex/Claude 自己调用模型、决定何时用工具；本项目不再内置 interactive/main 聊天 agent。
+- **上下文按需读取**：外部 agent 通过 `context_get` 拉取项目状态、历史、记忆和画像提示，避免启动时固定塞大量上下文。
+- **记忆不是聊天记录堆积**：长期信息通过 `memory_write` 和后台维护写入向量库/结构化索引；raw tail 只做短期溢出查看。
+- **本地 runtime 边界清晰**：SQLite、MCP、hook queue、Codex wrapper、future Claude wrapper 都保持 provider-neutral。
 
 ## 初版目录
 
@@ -44,56 +48,18 @@ advanced_agent/
 │   ├── roadmap.md               # 开发路线
 │   └── memory_design.md         # 记忆和向量库设计
 ├── src/advanced_agent/
-│   ├── core.py                  # 领域对象和接口
-│   ├── orchestrator.py          # 主循环原型
-│   └── __init__.py
-├── src/advanced_agent/
-│   ├── agents/                  # interactive/main agent mock
 │   ├── stores/                  # SQLite-backed data access interfaces
 │   ├── runtime/                 # RuntimeApp composition root
-│   ├── audit.py                 # rule-based audit agent skeleton
+│   ├── codex_interactive.py     # codexx PTY wrapper
+│   ├── mcp_server.py            # project-local MCP server
 │   ├── interrupts.py            # interrupt gate/cooldown
 │   ├── models.py                # shared data models
-│   ├── supervisor.py            # process/task control plane
+│   ├── memory_service.py        # durable vector memory service
 │   └── time_service.py          # wall/monotonic time service
 └── tests/
     ├── test_core.py
     └── test_runtime.py
 ```
-
-## 运行原型
-
-```bash
-python -m advanced_agent.orchestrator
-```
-
-如果没有安装成包，可临时运行：
-
-```bash
-PYTHONPATH=src python -m advanced_agent.orchestrator
-```
-
-
-## 交互试用
-
-项目内虚拟环境已安装 `pytest` 和 `sqlite-vec`。启动本地交互原型：
-
-```bash
-source .venv/bin/activate
-PYTHONPATH=src python -m advanced_agent.cli --db runtime/advanced_agent.sqlite --workdir .
-```
-
-可用命令：
-
-```text
-/mem TEXT       把 TEXT 写入 sqlite-vec 向量记忆
-/search QUERY   搜索向量记忆
-/help           查看帮助
-/exit           退出
-```
-
-普通输入会走 `interactive-agent -> main-agent` mock 流程，先输出 provisional 快速反馈，再输出 authoritative 主 agent 结果。
-
 
 ## 真实模型配置
 
@@ -108,26 +74,18 @@ cp .env.example.json .env.json
 ```json
 {
   "roles": {
-    "interactive_model": "fast-local-or-cheap",
-    "main_model": "strong-main",
-    "audit_model": "audit-cheap",
-    "codex_model": "default"
+    "memory_model": "memory-cheap",
+    "memory_write_model": "memory-strong"
   },
   "models": {
-    "strong-main": {
+    "memory-strong": {
       "provider": "openai_compatible",
       "model": "MODEL_NAME",
       "base_url": "https://api.example.com/v1",
-      "api_key_env": "MAIN_MODEL_API_KEY"
+      "api_key_env": "MEMORY_WRITE_MODEL_API_KEY"
     }
   }
 }
 ```
 
-`codex_model: default` 表示 Codex task worker 仍使用 Codex CLI 自己的默认配置。`interactive_model` 和 `main_model` 若配置存在，会走 OpenAI-compatible `/chat/completions`；若 `.env.json` 不存在或角色为 `default`，则自动使用 mock/rule fallback。
-
-运行：
-
-```bash
-PYTHONPATH=src python -m advanced_agent.cli --config .env.json --db runtime/advanced_agent.sqlite
-```
+`memory_model` 用于可选的记忆标签/画像候选；`memory_write_model` 用于可选的画像写入批准。Codex 自身模型配置仍由 Codex CLI 管理。

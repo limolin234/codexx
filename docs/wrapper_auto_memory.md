@@ -42,9 +42,9 @@ Durable profile updates are diff-based and authoritative writes are owned by a
 strong model. The cheap `memory_model` is only an observer: it may propose
 add/update/supersede/remove candidates, but those candidates are treated as
 untrusted hints because small models hallucinate. Real vector-memory writes for
-profile maintenance require the `memory_write_model` role, falling back to
-`main_model`, and the model must approve changes through a function/tool-call
-interface. If no strong writer model is configured, wrapper profile maintenance
+profile maintenance require the `memory_write_model` role, and the model must
+approve changes through a function/tool-call interface. If no strong writer
+model is configured, wrapper profile maintenance
 updates the lightweight overlay/checkpoint only and does not create distilled
 traits.
 

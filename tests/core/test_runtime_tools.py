@@ -35,7 +35,7 @@ def test_runtime_tool_bridge_timer_and_event_wait(tmp_path) -> None:
 def test_runtime_tool_bridge_session_recent(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.default_session()
-    app.start_user_request(sid, "hello")
+    app.record_user_message(sid, "hello")
     bridge = RuntimeToolBridge(app)
     recent = bridge.call("session.recent", {"session_id": sid})
     assert recent["ok"] and any("hello" in line for line in recent["lines"])
@@ -44,7 +44,7 @@ def test_runtime_tool_bridge_session_recent(tmp_path) -> None:
 def test_runtime_tool_bridge_context_get_fuses_recent_and_memory(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.default_session()
-    app.start_user_request(sid, "context hello")
+    app.record_user_message(sid, "context hello")
     app.remember("context memory item", scope="project:ctx", type_="note")
     bridge = RuntimeToolBridge(app)
     ctx = bridge.call("context.get", {"session_id": sid, "query": "context memory", "scope": "project:ctx", "mode": "full", "view": "debug"})
@@ -57,7 +57,7 @@ def test_runtime_tool_bridge_context_get_supplement_skips_live_recent(tmp_path) 
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.create_session("supplement")
     for i in range(6):
-        app.start_user_request(sid, f"turn {i}")
+        app.record_user_message(sid, f"turn {i}")
     bridge = RuntimeToolBridge(app)
     ctx = bridge.call("context.get", {"session_id": sid, "query": "turn", "mode": "supplement", "live_recent_limit": 2, "recent_limit": 10, "view": "debug"})
     assert ctx["ok"]
@@ -85,8 +85,8 @@ def test_runtime_tool_bridge_context_get_excludes_noisy_logs_by_default(tmp_path
 def test_context_get_dedupes_injected_memories_and_context_lines(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.create_session("dedupe")
-    app.start_user_request(sid, "older context line")
-    app.start_user_request(sid, "live context line")
+    app.record_user_message(sid, "older context line")
+    app.record_user_message(sid, "live context line")
     app.memory.write(summary="dedupe memory item", scope="project:dedupe", type="decision")
     bridge = RuntimeToolBridge(app)
     args = {"session_id": sid, "query": "dedupe memory", "scope": "project:dedupe", "mode": "supplement", "live_recent_limit": 1, "caller_session_id": "codexsess_test"}
@@ -306,7 +306,7 @@ def test_runtime_tool_bridge_raw_tail_is_bounded(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.default_session()
     for i in range(5):
-        app.start_user_request(sid, f"raw message {i}")
+        app.record_user_message(sid, f"raw message {i}")
     bridge = RuntimeToolBridge(app)
     tail = bridge.call("session.raw_tail", {"session_id": sid, "limit": 3, "max_chars": 20})
     assert tail["ok"]

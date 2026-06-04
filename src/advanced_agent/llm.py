@@ -154,7 +154,7 @@ class ModelRouter:
     @classmethod
     def from_config(cls, config) -> "ModelRouter":
         clients = {}
-        for role in ("interactive_model", "main_model", "audit_model", "memory_model", "memory_write_model"):
+        for role in ("memory_model", "memory_write_model"):
             model = config.model_for_role(role)
             if model is not None:
                 clients[role] = OpenAICompatibleClient(model)

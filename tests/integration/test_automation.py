@@ -5,7 +5,7 @@ from advanced_agent.runtime.app import RuntimeApp
 def test_hook_store_and_automation_preference_update(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.create_session("auto")
-    app.start_user_request(sid, "架构和模块解耦很重要，不要急着 demo")
+    app.record_user_message(sid, "架构和模块解耦很重要，不要急着 demo")
     hook_id = app.hooks.ensure_unique(
         HookKind.PREFERENCE_MAINTENANCE,
         target=f"session:{sid}",
@@ -23,6 +23,6 @@ def test_hook_store_and_automation_preference_update(tmp_path) -> None:
 def test_user_request_schedules_maintenance(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.create_session("auto")
-    app.start_user_request(sid, "hello")
+    app.record_user_message(sid, "hello")
     rows = app.db.query_all("SELECT * FROM runtime_hooks WHERE target=? AND enabled=1", (f"session:{sid}",))
     assert rows

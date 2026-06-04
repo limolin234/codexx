@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
-from advanced_agent.agents.interactive import InteractiveAgent
-from advanced_agent.agents.main import MainAgent
 from advanced_agent.audit import AuditAgent
 from advanced_agent.events import EventBus, EventStore
 from advanced_agent.health import HealthChecker
@@ -30,10 +27,8 @@ from advanced_agent.processes import AsyncSubprocessRunner
 from advanced_agent.preferences import PreferenceWorker
 from advanced_agent.profile.hints import ProfileHintSelector
 from advanced_agent.profile.observer import LLMProfileMaintainer
-from advanced_agent.prompt_builder import PromptBuilder
 from advanced_agent.stores.audit_store import AuditStore, ControlStore
 from advanced_agent.stores.hook_store import HookStore
-from advanced_agent.stores.main_decision_store import MainDecisionStore
 from advanced_agent.stores.profile_store import ProfileStore, PromptOverlayStore
 from advanced_agent.stores.session_store import SessionStore
 from advanced_agent.stores.sqlite_store import SQLiteStore
@@ -53,8 +48,6 @@ class RuntimeApp:
     tasks: TaskStore
     audit: AuditAgent
     supervisor: Supervisor
-    interactive: InteractiveAgent
-    main: MainAgent
     vectors: SQLiteVecStore
     alignment: LLMMemoryAlignment
     memory_indexer: MemoryIndexer
@@ -62,7 +55,6 @@ class RuntimeApp:
     capabilities: BackendRegistry
     capability_router: CapabilityRouter
     capability_executor: CapabilityExecutor
-    decisions: MainDecisionStore
     profiles: ProfileStore
     overlays: PromptOverlayStore
     preferences: PreferenceWorker
@@ -80,8 +72,6 @@ class RuntimeApp:
     health: HealthChecker
     injection_ledger: InjectionLedger
     workspace: WorkspaceState
-    background_requests: dict[str, asyncio.Task]
-    completed_background: dict[str, object]
 
     @classmethod
     def create(
@@ -103,7 +93,6 @@ class RuntimeApp:
         injection_ledger = InjectionLedger(db, time)
         sessions = SessionStore(db)
         tasks = TaskStore(db)
-        decisions = MainDecisionStore(db)
         profiles = ProfileStore(db)
         overlays = PromptOverlayStore(db)
         hooks = HookStore(db)
@@ -125,17 +114,14 @@ class RuntimeApp:
         profile_hints = ProfileHintSelector(memory)
         context_builder = ContextBuilder(sessions, vectors, memory=memory, profile_selector=profile_hints)
         context_fork_builder = ContextForkBuilder(context_builder)
-        prompt_builder = PromptBuilder(context_builder, overlays, capabilities=capabilities)
-        interactive = InteractiveAgent(sessions, time, model=router.client_for("interactive_model"), prompt_builder=prompt_builder)
-        main = MainAgent(sessions, supervisor, time, decisions=decisions, model=router.client_for("main_model"), prompt_builder=prompt_builder, capability_executor=capability_executor)
         profile_maintainer = LLMProfileMaintainer(router.client_for("memory_model"))
-        major_memory_writer = MajorModelMemoryWriter(router.client_for("memory_write_model") or router.client_for("main_model"))
+        major_memory_writer = MajorModelMemoryWriter(router.client_for("memory_write_model"))
         preferences = PreferenceWorker(sessions, profiles, overlays, time, memory=memory, maintainer=profile_maintainer, major_writer=major_memory_writer)
         compactor = ConversationCompactor(sessions, vectors, alignment, time, memory_indexer=memory_indexer)
         task_summary_worker = TaskSummaryWorker(tasks, time)
         memory_maintenance = MemoryMaintenanceWorker(sessions, memory, preferences, time)
         automation = AutomationEngine(hooks, preferences, events, time, compactor=compactor, memory_indexer=memory_indexer, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance)
-        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, interactive=interactive, main=main, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, decisions=decisions, profiles=profiles, overlays=overlays, preferences=preferences, profile_hints=profile_hints, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, injection_ledger=injection_ledger, workspace=workspace, background_requests={}, completed_background={})
+        return cls(db=db, time=time, sessions=sessions, tasks=tasks, audit=audit, supervisor=supervisor, vectors=vectors, alignment=alignment, memory_indexer=memory_indexer, memory=memory, capabilities=capabilities, capability_router=capability_router, capability_executor=capability_executor, profiles=profiles, overlays=overlays, preferences=preferences, profile_hints=profile_hints, compactor=compactor, context_builder=context_builder, context_fork_builder=context_fork_builder, hooks=hooks, automation=automation, task_summary_worker=task_summary_worker, memory_maintenance=memory_maintenance, process_runner=process_runner, codex_worker=codex_worker, events=events, health=health, injection_ledger=injection_ledger, workspace=workspace)
 
     def create_session(self, title: str) -> str:
         session_id = self.sessions.create_session(title=title, now_ms=self.time.wall_ms())
@@ -157,89 +143,13 @@ class RuntimeApp:
         self.events.publish("session.context_rolled_back", "runtime", {"session_id": session_id, "cutoff_ms": cutoff_ms, "messages": count})
         return count
 
-    def start_user_request(self, session_id: str, text: str) -> tuple[str, object]:
-        """Record user input and return the immediate interactive delta."""
-        request_id = new_id("req")
-        delta = self.interactive.receive_user_message(session_id, request_id, text)
-        self.events.publish("interactive.provisional", "interactive", {"session_id": session_id, "request_id": request_id, "delta_id": delta.id})
-        self.automation.ensure_session_maintenance(session_id, idle_ms=0)
-        return request_id, delta
-
-    def finish_user_request(self, session_id: str, request_id: str, workdir: str):
-        """Run main internally, then render its result through interactive."""
-        main_delta = self.main.handle_request(session_id, request_id, workdir)
-        decision = self.decisions.latest_for_request(session_id, request_id)
-        self.events.publish("main.decided", "main", {"session_id": session_id, "request_id": request_id, "decision_id": None if decision is None else decision.id})
-        render_text = decision.user_visible_instruction if decision is not None else main_delta.text
-        rendered_delta = self.interactive.render_main_reply(session_id, request_id, render_text)
-        self.events.publish("interactive.authoritative_render", "interactive", {"session_id": session_id, "request_id": request_id, "delta_id": rendered_delta.id})
-        return rendered_delta
-
-    async def finish_user_request_async(self, session_id: str, request_id: str, workdir: str):
-        """Async main path for background interactions."""
-        main_delta = await self.main.handle_request_async(session_id, request_id, workdir)
-        decision = self.decisions.latest_for_request(session_id, request_id)
-        self.events.publish("main.decided", "main", {"session_id": session_id, "request_id": request_id, "decision_id": None if decision is None else decision.id})
-        render_text = decision.user_visible_instruction if decision is not None else main_delta.text
-        rendered_delta = self.interactive.render_main_reply(session_id, request_id, render_text)
-        self.events.publish("interactive.authoritative_render", "interactive", {"session_id": session_id, "request_id": request_id, "delta_id": rendered_delta.id})
-        return rendered_delta
-
-    async def start_user_request_background(self, session_id: str, text: str, workdir: str) -> tuple[str, object]:
-        """Return interactive provisional output now and finish main later.
-
-        This is the first background interaction skeleton. It preserves the
-        user-facing contract immediately; the current model client is still
-        synchronous internally, so replacing it with an async HTTP backend is a
-        later optimization behind the same method boundary.
-        """
-        request_id, quick = self.start_user_request(session_id, text)
-        task = asyncio.create_task(self._finish_user_request_task(session_id, request_id, workdir), name=f"main-request-{request_id}")
-        self.background_requests[request_id] = task
-        self.events.publish("interaction.background.started", "runtime", {"session_id": session_id, "request_id": request_id})
-        return request_id, quick
-
-    async def start_main_request_background(self, session_id: str, text: str, workdir: str | None = None) -> str:
-        """Record user input and run main directly in the background.
-
-        This is the preferred CLI path when interactive should not behave like a
-        second semantic model. The interactive layer may still render the final
-        answer, but it does not produce an independent quick answer.
-        """
+    def record_user_message(self, session_id: str, text: str, *, schedule_maintenance: bool = True) -> str:
+        """Record external-agent user text without running an internal chat agent."""
         request_id = new_id("req")
         self.sessions.append_message(Message(session_id=session_id, request_id=request_id, role="user", content=text, created_at_ms=self.time.wall_ms()))
-        task_workdir = workdir or str(self.workspace.cwd)
-        task = asyncio.create_task(self._finish_user_request_task(session_id, request_id, task_workdir), name=f"main-direct-{request_id}")
-        self.background_requests[request_id] = task
-        self.events.publish("interaction.main_direct.started", "runtime", {"session_id": session_id, "request_id": request_id})
-        return request_id
-
-    async def wait_user_request(self, request_id: str, timeout_seconds: float | None = None):
-        if request_id in self.completed_background:
-            return self.completed_background[request_id]
-        task = self.background_requests[request_id]
-        if timeout_seconds is None:
-            return await task
-        return await asyncio.wait_for(task, timeout=timeout_seconds)
-
-    async def _finish_user_request_task(self, session_id: str, request_id: str, workdir: str):
-        try:
-            # Yield once so callers reliably receive the provisional delta
-            # before main begins its heavier synchronous work.
-            await asyncio.sleep(0)
-            result = await self.finish_user_request_async(session_id, request_id, workdir)
-            self.completed_background[request_id] = result
-            self.events.publish("interaction.background.completed", "runtime", {"session_id": session_id, "request_id": request_id})
-            return result
-        except Exception as exc:
-            self.events.publish("interaction.background.failed", "runtime", {"session_id": session_id, "request_id": request_id, "error": str(exc), "type": type(exc).__name__})
-            raise
-        finally:
-            self.background_requests.pop(request_id, None)
-
-    def handle_user_text(self, session_id: str, text: str, workdir: str | None = None) -> str:
-        request_id, _ = self.start_user_request(session_id, text)
-        self.finish_user_request(session_id, request_id, workdir or str(self.workspace.cwd))
+        self.events.publish("external.user_message.recorded", "runtime", {"session_id": session_id, "request_id": request_id})
+        if schedule_maintenance:
+            self.automation.ensure_session_maintenance(session_id, idle_ms=0)
         return request_id
 
     def chdir(self, path: str):

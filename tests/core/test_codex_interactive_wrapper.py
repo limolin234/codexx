@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from advanced_agent.codex_interactive import DEFAULT_BOOTSTRAP_CHARS, _append_codex_log_tail_to_ring_buffer, _append_codex_tail_to_ring_buffer, _clean_terminal_log, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, build_combined_model_instructions, codex_mcp_config_args, should_inject_bootstrap
+from advanced_agent.codex_interactive import DEFAULT_BOOTSTRAP_CHARS, _append_codex_log_tail_to_ring_buffer, _append_codex_tail_to_ring_buffer, _clean_terminal_log, _resolve_runtime_path, build_bootstrap_prompt, build_codex_env, build_combined_model_instructions, codex_mcp_config_args, should_inject_bootstrap, startup_status_line
+from advanced_agent.runtime.background import BackgroundRuntimeConfig
 from advanced_agent.runtime.app import RuntimeApp
 
 
@@ -11,6 +12,26 @@ def test_codex_interactive_env_contains_runtime_handles(tmp_path) -> None:
     assert env["ADVANCED_AGENT_SESSION"] == sid
     assert env["ADVANCED_AGENT_DB"].endswith("state.sqlite")
     assert env["ADVANCED_AGENT_CODEX_LOG"].endswith("codex.log")
+
+
+def test_startup_status_line_reports_memory_key_readiness(tmp_path) -> None:
+    config = tmp_path / ".env.json"
+    config.write_text(
+        """
+{
+  "roles": {"memory_model": "small", "memory_write_model": "strong"},
+  "models": {
+    "small": {"provider": "openai_compatible", "model": "s", "base_url": "http://x/v1", "api_key": "ks"},
+    "strong": {"provider": "openai_compatible", "model": "b", "base_url": "http://x/v1", "api_key": "kb"}
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    line = startup_status_line(config, background_config=BackgroundRuntimeConfig(enabled=True))
+    assert "memory_model=可用" in line
+    assert "memory_write_model=可用" in line
+    assert "自动画像管理=已启动" in line
 
 
 def test_codex_mcp_config_args_inject_project_server(tmp_path) -> None:
@@ -58,7 +79,7 @@ def test_clean_terminal_log_removes_ansi_noise() -> None:
 def test_codex_log_tail_buffers_raw_tail_without_durable_memory(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.default_session()
-    app.start_user_request(sid, "closing buffer should be preserved")
+    app.record_user_message(sid, "closing buffer should be preserved")
     log_path = tmp_path / "codex.log"
     log_path.write_text("\x1b[31mworking\x1b[0m\n[WRAPPER_CTRL_C_INTERRUPTED]\n", encoding="utf-8")
     _append_codex_log_tail_to_ring_buffer(app, sid, "codexsess_test", log_path)
@@ -83,8 +104,8 @@ def test_append_codex_tail_to_ring_buffer_is_idempotent(tmp_path) -> None:
 def test_build_bootstrap_prompt_includes_bounded_recent_tail(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.default_session()
-    app.start_user_request(sid, "short first message")
-    app.start_user_request(sid, "important latest wrapper context")
+    app.record_user_message(sid, "short first message")
+    app.record_user_message(sid, "important latest wrapper context")
     prompt = build_bootstrap_prompt(app, sid, max_chars=200)
     assert "Advanced Agent bootstrap context" in prompt
     assert "session_raw_tail" in prompt

@@ -6,8 +6,8 @@ from advanced_agent.stores.profile_store import ProfileStore, PromptOverlayStore
 def test_preference_worker_bounded_profile(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.create_session("prefs")
-    app.start_user_request(sid, "我希望先讨论架构和模块解耦，可维护性优先，不要急着 demo")
-    app.start_user_request(sid, "interactive 只做快速反馈，main agent 做核心判断")
+    app.record_user_message(sid, "我希望先讨论架构和模块解耦，可维护性优先，不要急着 demo")
+    app.record_user_message(sid, "interactive 只做快速反馈，main agent 做核心判断")
     profile_id = app.preferences.update_from_session(sid, scope="project:test")
     assert profile_id.startswith("profile_")
     summary = app.profiles.get_profile("project:test")
