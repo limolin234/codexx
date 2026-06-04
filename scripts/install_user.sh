@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 BIN_DIR="${HOME}/.local/bin"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 WITH_DEPS=1
 FORCE=0
 DRY_RUN=0
@@ -18,7 +18,7 @@ Install Advanced Agent user-level launchers:
   advanced-agentd
 
 Actions:
-  1. create .venv if missing
+  1. create .venv if missing (requires Python 3.11+)
   2. install this project into .venv by default
   3. create symlinks under ~/.local/bin
 
@@ -51,14 +51,42 @@ run() {
 
 ensure_venv() {
   if [ -s "$ROOT/.venv/bin/python" ] && "$ROOT/.venv/bin/python" -c 'import sys' >/dev/null 2>&1; then
-    return
-  fi
-  if [ -e "$ROOT/.venv" ]; then
+    if "$ROOT/.venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+      return
+    fi
+    echo "repairing virtualenv with unsupported Python: $ROOT/.venv" >&2
+  elif [ -e "$ROOT/.venv" ]; then
     echo "repairing broken virtualenv: $ROOT/.venv" >&2
   fi
+
+  if [ -z "$PYTHON_BIN" ]; then
+    local candidate
+    for candidate in python3.13 python3.12 python3.11 python3; do
+      if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+        PYTHON_BIN="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$PYTHON_BIN" ] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "Python 3.11+ is required, but no suitable interpreter was found." >&2
+    echo "Install python3.11-venv or set PYTHON_BIN=/path/to/python3.11 and retry." >&2
+    exit 1
+  fi
+  if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    echo "Python 3.11+ is required, but $PYTHON_BIN is too old." >&2
+    echo "Set PYTHON_BIN=/path/to/python3.11 and retry." >&2
+    exit 1
+  fi
+
   run "$PYTHON_BIN" -m venv --copies --clear "$ROOT/.venv"
   if [ "$DRY_RUN" -eq 0 ] && ! "$ROOT/.venv/bin/python" -c 'import sys' >/dev/null 2>&1; then
     echo "failed to create a working virtualenv: $ROOT/.venv" >&2
+    exit 1
+  fi
+  if [ "$DRY_RUN" -eq 0 ] && ! "$ROOT/.venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    echo "failed to create a Python 3.11+ virtualenv: $ROOT/.venv" >&2
     exit 1
   fi
 }
@@ -68,7 +96,7 @@ install_deps() {
     return
   fi
   run "$ROOT/.venv/bin/python" -m ensurepip --upgrade
-  run "$ROOT/.venv/bin/python" -m pip --default-timeout 120 --retries 10 install "setuptools>=40.8.0" wheel
+  run "$ROOT/.venv/bin/python" -m pip --default-timeout 120 --retries 10 install --upgrade "pip>=23.0" "setuptools>=64" wheel
   run "$ROOT/.venv/bin/python" -m pip --default-timeout 120 --retries 10 install -e "$ROOT"
 }
 
