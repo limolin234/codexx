@@ -4,6 +4,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.venv_py38/
+src/advanced_agent.egg-info/
 runtime/*.sqlite
 runtime/*.sqlite-*
 runtime/codex_interactive/*.terminal.log
