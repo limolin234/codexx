@@ -52,3 +52,33 @@ def test_background_runtime_stop_swallows_keyboard_interrupt(tmp_path) -> None:
     queue.stop()
     events = app.events.store.recent(5)
     assert any(event.type == "runtime.background.stop_interrupted" for event in events)
+
+
+def test_shutdown_flush_skips_hooks_without_flush_flag(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    hook_id = app.hooks.schedule_in(HookKind.CHECK_STATE, target="slow", now_ms=app.time.wall_ms(), delay_ms=0)
+
+    result = app.automation.tick(shutdown_flush=True)
+
+    assert result.fired == 0
+    row = app.db.query_one("SELECT enabled FROM runtime_hooks WHERE id=?", (hook_id,))
+    assert row is not None
+    assert int(row["enabled"]) == 1
+
+
+def test_shutdown_flush_runs_explicit_flush_hooks(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    hook_id = app.hooks.schedule_in(
+        HookKind.CHECK_STATE,
+        target="fast",
+        now_ms=app.time.wall_ms(),
+        delay_ms=0,
+        payload={"flush_on_stop": True},
+    )
+
+    result = app.automation.tick(shutdown_flush=True)
+
+    assert result.fired == 1
+    row = app.db.query_one("SELECT enabled FROM runtime_hooks WHERE id=?", (hook_id,))
+    assert row is not None
+    assert int(row["enabled"]) == 0

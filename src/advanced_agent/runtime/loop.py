@@ -39,8 +39,8 @@ class RuntimeLoop:
     def last_result(self) -> AutomationResult | None:
         return self._last_result
 
-    async def tick_once(self) -> AutomationResult:
-        result = self.app.automation.tick(limit=self.config.hook_limit)
+    async def tick_once(self, *, shutdown_flush: bool = False) -> AutomationResult:
+        result = self.app.automation.tick(limit=self.config.hook_limit, shutdown_flush=shutdown_flush)
         self._last_result = result
         if result.fired or self.config.publish_idle_ticks:
             self.app.events.publish(

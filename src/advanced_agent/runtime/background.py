@@ -115,7 +115,7 @@ class BackgroundRuntimeQueue:
     async def _flush_due_hooks(self, loop: RuntimeLoop) -> None:
         deadline = time.monotonic() + max(0.0, self.config.exit_flush_seconds)
         while time.monotonic() < deadline:
-            result = await loop.tick_once()
+            result = await loop.tick_once(shutdown_flush=True)
             if result.fired == 0:
                 break
 

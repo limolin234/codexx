@@ -65,9 +65,11 @@ class AutomationEngine:
         )
         return preference_hook_id
 
-    def tick(self, limit: int = 20) -> AutomationResult:
+    def tick(self, limit: int = 20, *, shutdown_flush: bool = False) -> AutomationResult:
         now = self.time.wall_ms()
         due = self.hooks.due(now, limit=limit)
+        if shutdown_flush:
+            due = [hook for hook in due if bool(hook.payload.get("flush_on_stop", False))]
         actions: list[str] = []
         for hook in due:
             action = self._handle_hook(hook)
