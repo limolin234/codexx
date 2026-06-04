@@ -70,7 +70,7 @@ def test_semantic_maintenance_approval_writes_memory(tmp_path) -> None:
     for idx in range(3):
         app.semantic_store.append_event(session_id=sid, kind="user_submit", text=f"重要设计 {idx}", now_ms=app.time.wall_ms())
 
-    result = app.semantic_maintenance.run(session_id=sid, scope="project:semantic-approval", reason="user_submit_3")
+    result = app.semantic_maintenance.run(session_id=sid, scope="project:semantic-approval", reason="session_close", force=True)
 
     assert result.candidates_created == 1
     assert result.candidates_processed == 1
@@ -79,3 +79,15 @@ def test_semantic_maintenance_approval_writes_memory(tmp_path) -> None:
     records = app.memory.recent(scope="project:semantic-approval", type="handoff", limit=5)
     assert len(records) == 1
     assert records[0].summary == "Semantic pipeline handoff"
+
+
+def test_routine_semantic_compaction_does_not_create_memory_candidate(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.create_session("semantic-routine")
+    for idx in range(3):
+        app.semantic_store.append_event(session_id=sid, kind="user_submit", text=f"普通对话 {idx}", now_ms=app.time.wall_ms())
+
+    result = app.semantic_maintenance.run(session_id=sid, scope="project:semantic-routine", reason="user_submit_3")
+
+    assert result.summaries_created == 1
+    assert result.candidates_created == 0

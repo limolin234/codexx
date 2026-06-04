@@ -93,7 +93,7 @@ class SemanticMaintenanceWorker:
                     prompt_version=SEMANTIC_COMPACT_PROMPT_VERSION,
                     now_ms=self.time.wall_ms(),
                 )
-                if task.reason in {"session_close", "interrupt", "user_submit_3"}:
+                if task.reason in {"session_close", "interrupt"}:
                     self._create_candidate_from_summary(task.session_id, task.scope, summary_id=summary_id, summary=summary, evidence_hash=task.input_hash)
                     result.candidates_created += 1
                 result.summaries_created += 1
@@ -181,6 +181,7 @@ class SemanticMaintenanceWorker:
                         "importance": candidate.importance,
                         "confidence": candidate.confidence,
                     },
+                    "existing_related_memories": self._existing_related_memories(candidate),
                     "instruction": "Approve only durable project handoffs, decisions, preferences, verified outcomes, or stable workflow habits.",
                 }, ensure_ascii=False, sort_keys=True)),
             ],
@@ -191,6 +192,25 @@ class SemanticMaintenanceWorker:
             if call.name == SEMANTIC_MEMORY_TOOL_NAME:
                 return json.loads(call.arguments or "{}")
         return {"approve": False, "reason": "no_tool_call"}
+
+    def _existing_related_memories(self, candidate: SemanticMemoryCandidate) -> list[dict]:
+        if self.memory is None:
+            return []
+        try:
+            records = self.memory.search(candidate.summary, scope=candidate.scope, top_k=5)
+        except Exception:
+            return []
+        return [
+            {
+                "memory_id": record.memory_id,
+                "type": record.type,
+                "summary": record.summary,
+                "content": (record.content or "")[:800],
+                "confidence": record.confidence,
+                "importance": record.importance,
+            }
+            for record in records
+        ]
 
     def _approval_tool_schema(self) -> dict:
         return {
