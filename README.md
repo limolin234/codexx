@@ -45,7 +45,7 @@ bash scripts/install_user.sh
 
 安装脚本会：
 
-1. 创建/修复项目内 `.venv`；
+1. 创建或复用项目内 `.venv`；
 2. 把本项目以 editable 方式安装到 `.venv`；
 3. 在项目目录外只创建一个用户级入口：
 
@@ -62,11 +62,14 @@ export PATH="$HOME/.local/bin:$PATH"
 可以把上面一行放进 `~/.bashrc` / `~/.zshrc`。除此之外，默认安装不修改
 shell rc、`~/.codex/config.toml`、`/usr/bin` 或其他系统目录。
 
-卸载用户级入口：
+查看并手动卸载用户级入口：
 
 ```bash
 bash scripts/remove_system_changes.sh
 ```
+
+该脚本只校验 `~/.local/bin/codexx` 是否是本项目生成的 launcher，并打印
+`rm -i` 命令；不会自动删除用户文件。
 
 ## 运行时环境边界
 

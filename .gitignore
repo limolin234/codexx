@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 .venv_py38/
 src/advanced_agent.egg-info/
+runtime/
 runtime/*.sqlite
 runtime/*.sqlite-*
 runtime/codex_interactive/*.terminal.log

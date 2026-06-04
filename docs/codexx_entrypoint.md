@@ -44,17 +44,15 @@ bash scripts/install_user.sh
 ```
 
 The installer creates `.venv` if needed, installs the project into it, and
-writes user-level launchers under `~/.local/bin`:
+writes one user-level launcher under `~/.local/bin`:
 
 ```text
 codexx
-advanced-agent-mcp
-advanced-agentd
 ```
 
-The launchers are small bash wrappers, so the project `bin/*` files do not need
-executable bits on filesystems that do not preserve Unix mode bits. The project
-launchers locate the project root from their own script path rather than a
+The launcher is a small bash wrapper, so the project `bin/codexx` file does not
+need executable bits on filesystems that do not preserve Unix mode bits. The
+project launcher locates the project root from its own script path rather than a
 machine-specific absolute path.
 
 Skip dependency installation when the venv is already prepared:

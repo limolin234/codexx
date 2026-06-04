@@ -54,7 +54,7 @@ Use:
 bash scripts/remove_system_changes.sh
 ```
 
-By default it removes the user-level `~/.local/bin/codexx` launcher when it
-points back to this project. Use `--project-local` if you also want to remove
-generated project launcher scripts under `bin/` and `.venv/bin/`, including
-`codexx`, `advanced-agent-mcp`, and `advanced-agentd`.
+The helper is intentionally non-destructive. It refuses to run as root/sudo,
+checks whether `~/.local/bin/codexx` appears to be this project's generated
+launcher, prints sha256 evidence, and then prints the exact `rm -i` command for
+manual removal. It does not remove files automatically.

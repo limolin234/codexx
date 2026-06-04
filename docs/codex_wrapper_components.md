@@ -33,11 +33,12 @@ memory ingestion.
     variables.
   - Executes `python -m advanced_agent.codex_interactive`.
 - `pyproject.toml`
-  - Defines package console scripts:
+  - Defines venv-local package console scripts:
     - `codexx`
-    - `advanced-agent-codex`
     - `advanced-agent-mcp`
     - `advanced-agentd`
+  - User-level install exposes only `codexx`; MCP and daemon scripts are
+    project-local/.venv-local implementation/debug entry points.
 
 ### Python wrapper core
 

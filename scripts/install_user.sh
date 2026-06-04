@@ -5,12 +5,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 BIN_DIR="${HOME}/.local/bin"
 PYTHON_BIN="${PYTHON_BIN:-}"
 WITH_DEPS=1
-FORCE=0
 DRY_RUN=0
+
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  echo "Refusing to run as root/sudo." >&2
+  echo "This installer is user-local and should only write under the invoking user's ~/.local/bin and this project." >&2
+  exit 1
+fi
 
 usage() {
   cat <<EOF
-Usage: bash scripts/install_user.sh [--no-deps] [--force] [--dry-run]
+Usage: bash scripts/install_user.sh [--no-deps] [--dry-run]
 
 Install the Advanced Agent user-level launcher:
   codexx
@@ -22,7 +27,6 @@ Actions:
 
 Options:
   --no-deps   skip pip install step
-  --force     replace existing ~/.local/bin/codexx even if it is not from this project
   --dry-run   print actions only
 EOF
 }
@@ -30,7 +34,6 @@ EOF
 for arg in "$@"; do
   case "$arg" in
     --no-deps) WITH_DEPS=0 ;;
-    --force) FORCE=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; usage >&2; exit 2 ;;
@@ -52,9 +55,13 @@ ensure_venv() {
     if "$ROOT/.venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
       return
     fi
-    echo "repairing virtualenv with unsupported Python: $ROOT/.venv" >&2
+    echo "Existing virtualenv uses unsupported Python: $ROOT/.venv" >&2
+    echo "Python 3.11+ is required. Move/remove .venv yourself, or set PYTHON_BIN and retry after cleanup." >&2
+    exit 1
   elif [ -e "$ROOT/.venv" ]; then
-    echo "repairing broken virtualenv: $ROOT/.venv" >&2
+    echo "Existing .venv is not a working Python virtualenv: $ROOT/.venv" >&2
+    echo "Refusing to delete or overwrite it automatically. Move/remove .venv yourself and retry." >&2
+    exit 1
   fi
 
   if [ -z "$PYTHON_BIN" ]; then
@@ -78,7 +85,7 @@ ensure_venv() {
     exit 1
   fi
 
-  run "$PYTHON_BIN" -m venv --copies --clear "$ROOT/.venv"
+  run "$PYTHON_BIN" -m venv --copies "$ROOT/.venv"
   if [ "$DRY_RUN" -eq 0 ] && ! "$ROOT/.venv/bin/python" -c 'import sys' >/dev/null 2>&1; then
     echo "failed to create a working virtualenv: $ROOT/.venv" >&2
     exit 1
@@ -109,8 +116,9 @@ link_launcher() {
     if [ -f "$dst" ] && grep -Fxq "exec bash \"$src\" \"\$@\"" "$dst"; then
       generated_wrapper=1
     fi
-    if [ "$target" != "$src" ] && [ "$generated_wrapper" -ne 1 ] && [ "$FORCE" -ne 1 ]; then
-      echo "refuse to replace existing $dst -> ${target:-not-a-symlink}; pass --force to replace" >&2
+    if [ "$target" != "$src" ] && [ "$generated_wrapper" -ne 1 ]; then
+      echo "refuse to replace existing $dst -> ${target:-not-a-symlink}" >&2
+      echo "Move/remove that file yourself if you want this installer to create codexx there." >&2
       exit 1
     fi
     run rm -f "$dst"
@@ -127,42 +135,10 @@ EOF
   fi
 }
 
-remove_legacy_launcher() {
-  local name="$1"
-  local path="$BIN_DIR/$name"
-  local src="$ROOT/bin/$name"
-  if [ ! -e "$path" ] && [ ! -L "$path" ]; then
-    return
-  fi
-  if [ -f "$path" ] && grep -Fxq "exec bash \"$src\" \"\$@\"" "$path"; then
-    if [ "$DRY_RUN" -eq 1 ]; then
-      echo "would remove legacy launcher: $path -> bash $src"
-    else
-      rm -f "$path"
-      echo "removed legacy launcher: $path -> bash $src"
-    fi
-    return
-  fi
-  local target
-  target="$(readlink -f "$path" || true)"
-  case "$target" in
-    "$ROOT"/*)
-      if [ "$DRY_RUN" -eq 1 ]; then
-        echo "would remove legacy launcher: $path -> $target"
-      else
-        rm -f "$path"
-        echo "removed legacy launcher: $path -> $target"
-      fi
-      ;;
-  esac
-}
-
 run mkdir -p "$BIN_DIR"
 ensure_venv
 install_deps
 link_launcher codexx
-remove_legacy_launcher advanced-agent-mcp
-remove_legacy_launcher advanced-agentd
 
 cat <<EOF
 Installed Advanced Agent launcher:
