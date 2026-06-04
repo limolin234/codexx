@@ -86,6 +86,156 @@ export `ADVANCED_AGENT_*`。
 它会启动 Codex，并自动注入项目级 MCP server，让 Codex 能调用
 `context_get`、`memory_write`、`session_raw_tail`、`project_info` 等记忆/上下文工具。
 
+
+## 当前版本整体架构图
+
+这张图是面向用户的当前版本总览：`codexx` 不是旧设计里的独立 interactive/main agent 系统，
+而是包在 Codex/未来其他终端 agent 外面的本地 runtime、MCP 工具和长期记忆层。
+
+```mermaid
+flowchart TB
+  U[用户 / 终端] -->|运行 codexx| L[~/.local/bin/codexx launcher]
+  L --> B[bin/codexx\n定位项目根目录并使用 .venv]
+  B --> W[codex_interactive.py\nPTY wrapper]
+
+  subgraph Target[用户当前工作区 / target workspace]
+    CWD[调用 codexx 时的 cwd]
+    AG[目标项目 AGENTS.md / AGENT.md]
+    FILES[目标项目文件与命令]
+  end
+
+  W -->|保留调用者 cwd| CWD
+  CWD --> AG
+  CWD --> FILES
+
+  subgraph WrappedAgent[外部终端 agent]
+    CODEX[Codex CLI\n当前主要被包装对象]
+    FUTURE[未来 Claude / 其他 TTY agent]
+  end
+
+  W -->|spawn PTY child| CODEX
+  W -.可复用 TTY 清洗边界.-> FUTURE
+  CODEX -->|正常模型调用\n由 Codex 自己配置| CODEXAPI[Codex / OpenAI API]
+  CODEX -->|读目标项目指令| AG
+  CODEX -->|编辑/测试/命令| FILES
+
+  subgraph Injection[临时注入层：不修改全局 Codex 配置]
+    INST[runtime/codex_interactive/*.instructions.md\n合并全局 Codex 指令 + codexx runtime contract]
+    MCPPROC[advanced-agent-mcp\n项目本地 MCP server]
+    ENV[ADVANCED_AGENT_* 环境变量\nDB / config / scope / log dir]
+  end
+
+  W -->|生成并用 -c model_instructions_file 注入| INST
+  W -->|临时 -c 注入 MCP server| MCPPROC
+  W -->|设置子进程环境| ENV
+  INST --> CODEX
+  MCPPROC <--> |MCP tool calls| CODEX
+
+  subgraph MCPTools[Codex 可见的主要工具]
+    CTX[context_get\n统一上下文/记忆读取入口]
+    MEMW[memory_write\n显式长期记忆写入]
+    RAW[session_raw_tail\n按需读取 bounded raw tail]
+    PINFO[project_info\n当前 cwd / project root]
+  end
+
+  MCPPROC --> CTX
+  MCPPROC --> MEMW
+  MCPPROC --> RAW
+  MCPPROC --> PINFO
+
+  subgraph Runtime[Advanced Agent 本地 runtime]
+    APP[RuntimeApp / RuntimeToolBridge]
+    WS[WorkspaceState\nper-process runtime cwd]
+    HOOKQ[BackgroundRuntimeQueue\n处理 due runtime_hooks]
+    PB[Prompt / profile hint builder]
+    MS[MemoryService]
+    IDX[MemoryIndexer / alignment]
+    PROF[Profile / preference maintenance]
+    SEM[Semantic maintenance\nTTY 事件压缩 / candidate]
+  end
+
+  MCPPROC --> APP
+  APP --> WS
+  APP --> PB
+  APP --> MS
+  APP --> HOOKQ
+  HOOKQ --> SEM
+  HOOKQ --> PROF
+  HOOKQ --> IDX
+
+  subgraph DB[SQLite runtime/advanced_agent.sqlite + WAL]
+    SESS[sessions / messages / interaction_streams\n短期会话与 raw tail]
+    EVENTS[runtime_events / semantic_events\n清洗后的运行时事件]
+    HOOKS[runtime_hooks\n持久化维护队列]
+    TASKS[semantic_tasks / summaries / candidates\n压缩与待批准记忆候选]
+    ITEMS[memory_items\n长期记忆正文与元数据]
+    FACETS[memory_facets\nworkstream / workspace / content_type / keywords 等]
+    FTS[memory_fts\n关键词 / BM25 检索]
+    VEC[sqlite-vec memory vectors\n多 facet 向量召回]
+    PROFILE[user_profiles / prompt_overlays\n画像与提示覆盖]
+  end
+
+  APP <--> SESS
+  APP <--> EVENTS
+  HOOKQ <--> HOOKS
+  SEM <--> TASKS
+  PROF <--> PROFILE
+  MS <--> ITEMS
+  MS <--> FACETS
+  MS <--> FTS
+  MS <--> VEC
+  IDX --> ITEMS
+  IDX --> FACETS
+  IDX --> FTS
+  IDX --> VEC
+
+  subgraph Retrieval[context_get 读取路径]
+    QP[query profile / facet weights]
+    HYB[hybrid search\nvector + FTS + facet + recency/importance rerank]
+    HYD[SQLite hydration\n返回 compact context lines / memory records]
+  end
+
+  CTX --> QP --> HYB --> HYD --> CODEX
+  HYB --> VEC
+  HYB --> FTS
+  HYB --> FACETS
+  HYD --> ITEMS
+  RAW --> SESS
+  PINFO --> WS
+  MEMW --> MS
+
+  subgraph Filesystem[项目本地运行时文件]
+    LOG[runtime/codex_interactive/*.terminal.log\n清洗后的 bounded TTY log]
+    IF[runtime/codex_interactive/*.instructions.md\n每次会话生成的小指令文件]
+    CFG[.env.json\nmemory_model / memory_write_model 配置]
+    EXAMPLE[.env.example.json\n可提交模板]
+  end
+
+  W --> LOG
+  W --> IF
+  B --> CFG
+  CFG -.模板来自.-> EXAMPLE
+
+  subgraph Models[可选模型调用边界]
+    MM[memory_model\n便宜模型：摘要/标签/观察]
+    MWM[memory_write_model\n较强模型：长期记忆批准/画像写入]
+  end
+
+  SEM -.可选.-> MM
+  IDX -.可选.-> MM
+  PROF -.可选.-> MM
+  PROF -.可选.-> MWM
+  SEM -.候选批准.-> MWM
+
+  subgraph Boundaries[关键边界]
+    B1[不再内置旧版独立 interactive/main agent]
+    B2[Codex 是当前语义主体；codexx 提供 runtime / MCP / memory]
+    B3[启动默认安静；历史和长期记忆按需用 context_get 读取]
+    B4[memory_write 只写数据库/向量记忆，不自动写 Markdown]
+    B5[Advanced Agent repo 只是 wrapper；目标 cwd 的 AGENTS 才是目标项目指令]
+  end
+```
+
 ## 核心思想
 
 - **外部 agent 为语义主体**：Codex/Claude 自己调用模型、决定何时用工具；本项目不再内置 interactive/main 聊天 agent。
@@ -93,28 +243,29 @@ export `ADVANCED_AGENT_*`。
 - **记忆不是聊天记录堆积**：长期信息通过 `memory_write` 和后台维护写入向量库/结构化索引；raw tail 只做短期溢出查看。
 - **本地 runtime 边界清晰**：SQLite、MCP、hook queue、Codex wrapper、future Claude wrapper 都保持 provider-neutral。
 
-## 初版目录
+## 当前目录重点
 
 ```text
-advanced_agent/
-├── README.md
-├── AGENT.md                    # 给后续开发者/agent 的项目说明
+codexx/
+├── README.md                         # 用户入口与当前总架构图
+├── AGENTS.md                         # 当前项目级 Codex/codexx 工作说明
 ├── docs/
-│   ├── architecture.md          # 系统架构
-│   ├── roadmap.md               # 开发路线
-│   └── memory_design.md         # 记忆和向量库设计
+│   ├── codexx_runtime_architecture.md # codexx wrapper/runtime 细节
+│   ├── codexx_entrypoint.md           # launcher、MCP 注入、启动行为
+│   ├── codexx_runtime_instructions.md # 注入给 Codex 的 runtime contract
+│   └── memory_design.md               # 记忆和向量库设计
+├── bin/
+│   └── codexx                         # 项目内 launcher
+├── scripts/
+│   └── install.sh                     # 安装用户级 ~/.local/bin/codexx
 ├── src/advanced_agent/
-│   ├── stores/                  # SQLite-backed data access interfaces
-│   ├── runtime/                 # RuntimeApp composition root
-│   ├── codex_interactive.py     # codexx PTY wrapper
-│   ├── mcp_server.py            # project-local MCP server
-│   ├── interrupts.py            # interrupt gate/cooldown
-│   ├── models.py                # shared data models
-│   ├── memory_service.py        # durable vector memory service
-│   └── time_service.py          # wall/monotonic time service
-└── tests/
-    ├── test_core.py
-    └── test_runtime.py
+│   ├── codex_interactive.py           # PTY wrapper / log / maintenance hooks
+│   ├── mcp_server.py                  # project-local MCP server
+│   ├── runtime_tools.py               # MCP/runtime tool bridge
+│   ├── memory_service.py              # durable memory service
+│   ├── memory_indexer.py              # memory candidate/indexing path
+│   └── stores/                        # SQLite-backed data access interfaces
+└── tests/                             # core / integration tests
 ```
 
 ## 真实模型配置
