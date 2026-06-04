@@ -91,3 +91,34 @@ def test_routine_semantic_compaction_does_not_create_memory_candidate(tmp_path) 
 
     assert result.summaries_created == 1
     assert result.candidates_created == 0
+
+
+def test_semantic_maintenance_degrades_without_api_keys(tmp_path) -> None:
+    config = tmp_path / ".env.json"
+    config.write_text(
+        """
+{
+  "roles": {"memory_model": "small", "memory_write_model": "strong"},
+  "models": {
+    "small": {"provider": "openai_compatible", "model": "s", "base_url": "http://x/v1", "api_key_env": "MISSING_SMALL_KEY"},
+    "strong": {"provider": "openai_compatible", "model": "b", "base_url": "http://x/v1", "api_key_env": "MISSING_STRONG_KEY"}
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    app = RuntimeApp.create(tmp_path / "state.sqlite", config)
+    assert app.semantic_maintenance.model is None
+    assert app.semantic_maintenance.approval_model is None
+    sid = app.create_session("semantic-no-key")
+    app.semantic_store.append_event(session_id=sid, kind="user_submit", text="无 key 也应该能压缩", now_ms=app.time.wall_ms())
+
+    result = app.semantic_maintenance.run(session_id=sid, scope="project:no-key", reason="session_close", force=True)
+
+    assert result.summaries_created == 1
+    assert result.candidates_created == 1
+    assert result.candidates_processed == 1
+    assert result.memories_written == 0
+    row = app.db.query_one("SELECT status FROM semantic_memory_candidates WHERE session_id=?", (sid,))
+    assert row is not None
+    assert row["status"] == "awaiting_approval_model"

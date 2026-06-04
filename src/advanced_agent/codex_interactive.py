@@ -107,12 +107,12 @@ def startup_status_line(config_path: str | Path | None = None, *, background_con
         model = cfg.model_for_role(role)
         ok = bool(model is not None and model.resolved_api_key())
         all_ok = all_ok and ok
-        parts.append(f"{role}={'可用' if ok else '缺失'}")
+        parts.append(f"{role}={'可用' if ok else '未配置(可选)'}")
     bg = background_config or BackgroundRuntimeConfig.from_env()
     profile_state = "已启动" if bg.enabled else "已关闭"
     if bg.enabled and not all_ok:
-        profile_state = "已启动但模型受限"
-    return f"[advanced_agent] API key: {' '.join(parts)}；自动画像管理={profile_state}"
+        profile_state = "本地降级"
+    return f"[advanced_agent] 可选模型: {' '.join(parts)}；自动画像管理={profile_state}"
 
 
 def _package_project_root() -> Path:

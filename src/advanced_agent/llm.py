@@ -156,7 +156,7 @@ class ModelRouter:
         clients = {}
         for role in ("memory_model", "memory_write_model"):
             model = config.model_for_role(role)
-            if model is not None:
+            if model is not None and model.resolved_api_key():
                 clients[role] = OpenAICompatibleClient(model)
         return cls(clients)
 

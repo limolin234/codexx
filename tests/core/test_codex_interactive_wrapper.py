@@ -36,6 +36,26 @@ def test_startup_status_line_reports_memory_key_readiness(tmp_path) -> None:
     assert "自动画像管理=已启动" in line
 
 
+def test_startup_status_line_treats_missing_model_keys_as_optional(tmp_path) -> None:
+    config = tmp_path / ".env.json"
+    config.write_text(
+        """
+{
+  "roles": {"memory_model": "small", "memory_write_model": "strong"},
+  "models": {
+    "small": {"provider": "openai_compatible", "model": "s", "base_url": "http://x/v1", "api_key_env": "MISSING_SMALL_KEY"},
+    "strong": {"provider": "openai_compatible", "model": "b", "base_url": "http://x/v1", "api_key_env": "MISSING_STRONG_KEY"}
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    line = startup_status_line(config, background_config=BackgroundRuntimeConfig(enabled=True))
+    assert "memory_model=未配置(可选)" in line
+    assert "memory_write_model=未配置(可选)" in line
+    assert "自动画像管理=本地降级" in line
+
+
 def test_codex_mcp_config_args_inject_project_server(tmp_path) -> None:
     project_root = tmp_path / "advanced_agent"
     launch_cwd = tmp_path / "caller"

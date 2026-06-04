@@ -190,3 +190,7 @@ Cost control:
 - Shutdown does not run heavy model hooks by default.
 - Direct explicit memory writes bypass model approval because the user/tool call
   is already an explicit durable-memory action.
+- `memory_model` and `memory_write_model` are optional. If their API keys are
+  missing, the runtime falls back to local/deterministic summaries and keeps
+  durable-memory candidates in `awaiting_approval_model` instead of failing
+  startup.
