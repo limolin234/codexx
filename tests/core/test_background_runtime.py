@@ -35,3 +35,20 @@ def test_background_runtime_queue_can_be_disabled(tmp_path) -> None:
     queue = BackgroundRuntimeQueue(app, BackgroundRuntimeConfig(enabled=False))
     queue.start()
     assert not queue.running
+
+
+def test_background_runtime_stop_swallows_keyboard_interrupt(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    queue = BackgroundRuntimeQueue(app, BackgroundRuntimeConfig(enabled=True, exit_flush_seconds=0.1))
+
+    class InterruptingThread:
+        def join(self, timeout=None):
+            raise KeyboardInterrupt
+
+        def is_alive(self):
+            return True
+
+    queue._thread = InterruptingThread()  # type: ignore[assignment]
+    queue.stop()
+    events = app.events.store.recent(5)
+    assert any(event.type == "runtime.background.stop_interrupted" for event in events)

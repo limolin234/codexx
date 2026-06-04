@@ -67,7 +67,15 @@ class BackgroundRuntimeQueue:
         if self._thread is None:
             return
         self._stop.set()
-        self._thread.join(timeout=max(1.0, self.config.exit_flush_seconds + 2.0))
+        try:
+            self._thread.join(timeout=max(1.0, self.config.exit_flush_seconds + 2.0))
+        except KeyboardInterrupt:
+            self.app.events.publish(
+                "runtime.background.stop_interrupted",
+                "background_runtime",
+                {"exit_flush_seconds": self.config.exit_flush_seconds},
+            )
+            return
         if self._thread.is_alive():
             self.app.events.publish(
                 "runtime.background.stop_timeout",
