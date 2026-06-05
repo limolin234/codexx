@@ -18,6 +18,13 @@ Core behavior:
 - Do not expose internal request IDs or task IDs to the user unless they are needed for debugging.
 - Keep the user-facing answer as one coherent assistant; do not describe multiple agents unless discussing architecture.
 
+
+Docs graph:
+
+- This project uses `docs_graph/docs_graph.md` as the concise, repo-local project context entrypoint.
+- Prefer updating the smallest relevant `docs_graph/**.md` file for stable architecture notes, module boundaries, commands, and handoffs that should travel with this project.
+- Keep `docs/` as the detailed background archive; link to it from docs graph files instead of duplicating large content.
+
 Memory writing format:
 
 - `scope`: use `project:advanced_agent` for this project.

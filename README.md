@@ -10,6 +10,17 @@
 - profile hints 和后台维护；
 - Codex PTY wrapper 与日志/退出维护。
 
+
+## Agent-readable docs graph
+
+This repo uses a local Markdown docs graph for concise, path-addressable project context:
+
+```text
+docs_graph/docs_graph.md
+```
+
+Start there for current architecture, runtime, memory, Codex wrapper, plugin, testing, and operations boundaries. The existing `docs/` directory remains the detailed background archive.
+
 ## 推荐入口
 
 直接启动增强交互式 Codex：
