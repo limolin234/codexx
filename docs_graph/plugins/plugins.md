@@ -17,8 +17,8 @@ Plugins and hooks are extension surfaces around the runtime. Keep project-level 
 
 ## Detailed docs
 
-- `docs/plugin_hooks.md`
-- `docs/automation_hooks.md`
-- `docs/capability_router.md`
-- `docs/capability_executor.md`
-- `docs/long_running_tasks.md`
+- `plugin_hooks.md`
+- `automation_hooks.md`
+- `capability_router.md`
+- `capability_executor.md`
+- `../runtime/long_running_tasks.md`

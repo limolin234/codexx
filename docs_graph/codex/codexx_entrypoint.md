@@ -80,7 +80,7 @@ To make the wrapper behavior reliable without mutating `~/.codex/config.toml`,
 
 1. the user's configured global Codex instructions, when
    `~/.codex/config.toml` has `model_instructions_file`;
-2. the project-local `docs/codexx_runtime_instructions.md` contract, which tells
+2. the project-local `codexx_runtime_instructions.md` contract, which tells
    Codex how to use Advanced Agent MCP memory/tools and how to keep wrapper
    memory separate from target-project instructions.
 

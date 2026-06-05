@@ -25,7 +25,7 @@ memory ingestion.
 - `~/.local/bin/codexx`
   - User-level symlink, not tracked in the repo.
   - Points to this checkout's `bin/codexx`.
-  - Recorded in `docs/system_changes.md`.
+  - Recorded in `../operations/system_changes.md`.
 - `bin/codexx`
   - Bash launcher.
   - Finds the project-local `.venv`.
@@ -103,13 +103,13 @@ memory ingestion.
 
 ### Documentation
 
-- `docs/codexx_entrypoint.md`
+- `codexx_entrypoint.md`
   - User-facing startup behavior and memory-trust policy.
-- `docs/enhanced_interactive_codex.md`
+- `enhanced_interactive_codex.md`
   - Wrapper architecture note.
-- `docs/codex_mcp_memory_quickstart.md`
+- `codex_mcp_memory_quickstart.md`
   - MCP quickstart and debugging notes.
-- `docs/system_changes.md`
+- `../operations/system_changes.md`
   - User/system-level changes and how to remove them.
 - `scripts/remove_guidance.sh`
   - Removes user-level symlinks created for the project.

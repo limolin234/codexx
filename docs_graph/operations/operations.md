@@ -34,6 +34,6 @@ The remove helper checks whether `~/.local/bin/codexx` is the generated launcher
 
 ## Detailed docs
 
-- `docs/system_changes.md`
-- `docs/codexx_entrypoint.md`
-- `docs/memory_directory.md`
+- `system_changes.md`
+- `../codex/codexx_entrypoint.md`
+- `../memory/memory_directory.md`

@@ -157,7 +157,7 @@ Task agent 必须支持：
 - `voice-input worker`: 语音/VAD/ASR/NPU；
 - `tool-executor worker`: 工具执行和权限隔离。
 
-动态模块更新应由主进程执行：新模块先进入 staging，启动 shadow worker，自检通过后切流量，最后 drain 并停止旧 worker。详细见 `docs/process_model.md`。
+动态模块更新应由主进程执行：新模块先进入 staging，启动 shadow worker，自检通过后切流量，最后 drain 并停止旧 worker。详细见 `process_model.md`。
 
 ## 6. 边缘设备迁移
 

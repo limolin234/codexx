@@ -31,5 +31,5 @@ Runtime/memory split checks should verify:
 
 ## Detailed docs
 
-- `docs/testing_strategy.md`
-- `docs/migrations_doctor.md`
+- `testing_strategy.md`
+- `migrations_doctor.md`

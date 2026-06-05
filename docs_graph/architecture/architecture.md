@@ -22,8 +22,8 @@
 
 ## Detailed docs
 
-- `docs/codexx_runtime_architecture.md`
-- `docs/architecture.md`
-- `docs/process_model.md`
-- `docs/runtime_model.md`
-- `docs/tool_resource_model.md`
+- `codexx_runtime_architecture.md`
+- `architecture_old.md`
+- `process_model.md`
+- `../runtime/runtime_model.md`
+- `tool_resource_model.md`

@@ -19,7 +19,7 @@ This repo uses a local Markdown docs graph for concise, path-addressable project
 docs_graph/docs_graph.md
 ```
 
-Start there for current architecture, runtime, memory, Codex wrapper, plugin, testing, and operations boundaries. The existing `docs/` directory remains the detailed background archive.
+Start there for current architecture, runtime, memory, Codex wrapper, plugin, testing, and operations boundaries. The `docs_graph/` directory now contains both concise entry notes and detailed project documentation.
 
 ## 推荐入口
 
@@ -260,11 +260,17 @@ flowchart TB
 codexx/
 ├── README.md                         # 用户入口与当前总架构图
 ├── AGENTS.md                         # 当前项目级 Codex/codexx 工作说明
-├── docs/
-│   ├── codexx_runtime_architecture.md # codexx wrapper/runtime 细节
-│   ├── codexx_entrypoint.md           # launcher、MCP 注入、启动行为
-│   ├── codexx_runtime_instructions.md # 注入给 Codex 的 runtime contract
-│   └── memory_design.md               # 记忆和向量库设计
+├── docs_graph/                       # 细粒度项目文档树 / agent-readable docs graph
+│   ├── docs_graph.md                  # 当前文档入口和读取顺序
+│   ├── architecture/                  # 架构边界、进程模型、工具资源模型
+│   ├── codex/                         # codexx wrapper、MCP bridge、Codex 注入契约
+│   ├── memory/                        # 长期记忆、raw tail、索引、画像维护
+│   ├── runtime/                       # SQLite runtime、session、daemon、workdir
+│   ├── context/                       # context_get、预算压缩、forking、prompt builder
+│   ├── plugins/                       # plugins、hooks、capability 边界
+│   ├── testing/                       # 测试、迁移、doctor
+│   ├── operations/                    # 安装、卸载、系统足迹
+│   └── roadmap/                       # 路线图和旧阶段规划
 ├── bin/
 │   └── codexx                         # 项目内 launcher
 ├── scripts/

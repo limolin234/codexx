@@ -21,9 +21,9 @@ WAL sidecars may exist while live. Do not assume copying only a live `.sqlite` f
 
 ## Detailed docs
 
-- `docs/runtime_model.md`
-- `docs/sqlite_schema.md`
-- `docs/memory_directory.md`
-- `docs/session_lifecycle.md`
-- `docs/long_running_tasks.md`
-- `docs/workdir_control.md`
+- `runtime_model.md`
+- `sqlite_schema.md`
+- `../memory/memory_directory.md`
+- `session_lifecycle.md`
+- `long_running_tasks.md`
+- `workdir_control.md`

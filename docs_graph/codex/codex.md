@@ -26,9 +26,9 @@
 
 ## Detailed docs
 
-- `docs/codexx_entrypoint.md`
-- `docs/codex_wrapper_components.md`
-- `docs/codex_mcp_memory_quickstart.md`
-- `docs/mcp_runtime_bridge.md`
-- `docs/enhanced_interactive_codex.md`
-- `docs/codexx_runtime_instructions.md`
+- `codexx_entrypoint.md`
+- `codex_wrapper_components.md`
+- `codex_mcp_memory_quickstart.md`
+- `mcp_runtime_bridge.md`
+- `enhanced_interactive_codex.md`
+- `codexx_runtime_instructions.md`

@@ -200,5 +200,5 @@ supersession links. Retrieval marks records as used, and cleanup first soft-mark
 records inactive/superseded/deleted, then archives vector/FTS/facet rows, then
 physically purges old deleted tombstones.
 
-See `docs/wrapper_auto_memory.md` for the wrapper model-routing and injection
+See `wrapper_auto_memory.md` for the wrapper model-routing and injection
 budget contract.

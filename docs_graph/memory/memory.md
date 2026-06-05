@@ -33,9 +33,9 @@ For this project, use:
 
 ## Detailed docs
 
-- `docs/memory_design.md`
-- `docs/vector_memory.md`
-- `docs/memory_indexer.md`
-- `docs/memory_auto_injection.md`
-- `docs/preference_worker.md`
-- `docs/wrapper_auto_memory.md`
+- `memory_design.md`
+- `vector_memory.md`
+- `memory_indexer.md`
+- `memory_auto_injection.md`
+- `preference_worker.md`
+- `wrapper_auto_memory.md`

@@ -80,10 +80,10 @@
 
 已完成第一版可维护骨架：
 
-- `docs/runtime_model.md`：运行时进程、优先级、stop 语义。
-- `docs/context_interface.md`：agent 上下文接口设计。
-- `docs/sqlite_schema.md`：SQLite 静态结构说明。
-- `docs/vector_memory.md`：长期记忆 vector-first 检索与相量标签设计。
+- `docs_graph/runtime/runtime_model.md`：运行时进程、优先级、stop 语义。
+- `docs_graph/context/context_interface.md`：agent 上下文接口设计。
+- `docs_graph/runtime/sqlite_schema.md`：SQLite 静态结构说明。
+- `docs_graph/memory/vector_memory.md`：长期记忆 vector-first 检索与相量标签设计。
 - `src/advanced_agent/models.py`：共享数据模型，包括 authority、priority、stream delta、task/audit 模型。
 - `src/advanced_agent/time_service.py`：wall/monotonic 时间服务。
 - `src/advanced_agent/stores/`：SQLite wrapper 与 Session/Task/Audit/Control store。
@@ -273,7 +273,7 @@ User-Agent: OpenAI/Python 1.0
 
 已新增：
 
-- `docs/architecture_v1.md`
+- `docs_graph/architecture/architecture_v1.md`
 
 该文件固化当前第一版架构基线：
 
@@ -295,7 +295,7 @@ User-Agent: OpenAI/Python 1.0
 
 已新增/增强：
 
-- `docs/infrastructure_v1.md`：基础设施层目标和边界。
+- `docs_graph/runtime/infrastructure_v1.md`：基础设施层目标和边界。
 - `src/advanced_agent/errors.py`：统一 runtime 错误类型。
 - `src/advanced_agent/events.py`：持久化 in-process `EventBus` 和 `EventStore`。
 - `src/advanced_agent/health.py`：基础健康检查。
@@ -337,7 +337,7 @@ User-Agent: OpenAI/Python 1.0
 
 已新增：
 
-- `docs/subprocess_runtime.md`
+- `docs_graph/runtime/subprocess_runtime.md`
 - `src/advanced_agent/processes.py`
 - `tests/test_processes.py`
 
@@ -374,7 +374,7 @@ User-Agent: OpenAI/Python 1.0
 
 已新增：
 
-- `docs/codex_task_worker.md`
+- `docs_graph/codex/codex_task_worker.md`
 - `src/advanced_agent/codex_worker.py`
 - `tests/test_codex_worker.py`
 
@@ -503,7 +503,7 @@ User-Agent: OpenAI/Python 1.0
   - 当前自动处理 `PREFERENCE_MAINTENANCE`，调用 `PreferenceWorker.update_from_session`。
 - `RuntimeApp.start_user_request` 自动为 session 安排 preference maintenance hook。
 - hook 触发后写入 `runtime_events` 的 `hook.fired`。
-- 新增 `docs/automation_hooks.md`。
+- 新增 `docs_graph/plugins/automation_hooks.md`。
 - 新增 `tests/test_automation.py`。
 
 当前自动链路：
@@ -552,7 +552,7 @@ user message
 - `RuntimeApp` 接入：
   - `compactor`
   - `context_builder`
-- 新增 `docs/context_budget_compaction.md`。
+- 新增 `docs_graph/context/context_budget_compaction.md`。
 - 新增 `tests/test_compaction_context.py`。
 
 当前策略：
@@ -593,7 +593,7 @@ live dialogue > 50% budget
 - 新增 `plugins/README.md`。
 - 新增示例插件：
   - `plugins/group_summary/plugin.json`
-- 新增 `docs/plugin_hooks.md`。
+- 新增 `docs_graph/plugins/plugin_hooks.md`。
 - 新增 `tests/test_plugins.py`。
 
 当前插件机制：
@@ -620,7 +620,7 @@ plugins/<name>/plugin.json
 
 已新增：
 
-- `docs/architecture_review_2026-05-28.md`
+- `docs_graph/architecture/architecture_review_2026-05-28.md`
 
 审查结论：当前核心角色拆分是合理的，可作为 baseline 冻结：
 
@@ -660,7 +660,7 @@ supervisor / main / interactive / audit / task / memory / plugin
 - `MainAgent` 现在会把内部语义结论持久化为 `main_decisions`。
 - `RuntimeApp.finish_user_request` 从 `MainDecisionStore` 读取 `user_visible_instruction`，再交给 `InteractiveAgent` 渲染。
 - `runtime_events.main.decided` 现在记录 `decision_id`。
-- 新增 `docs/architecture_diagrams.md`，包含 Mermaid 图：
+- 新增 `architecture_diagrams.md` historical note; file not present in current tree，包含 Mermaid 图：
   - process/role topology;
   - user request flow;
   - task/Codex progress inspection;
@@ -687,7 +687,7 @@ supervisor / main / interactive / audit / task / memory / plugin
   - `tests/integration/`：automation、Codex worker、compaction、preferences、vector memory 等跨模块流。
   - `tests/plugins/`：外部插件接口和严格校验。
 - 新增 `tests/README.md`。
-- 新增 `docs/testing_strategy.md`。
+- 新增 `docs_graph/testing/testing_strategy.md`。
 - `PluginRegistry` 增强 manifest 校验：
   - plugin name 必须非空且 path-safe；
   - hook kind 必须在自身 namespace 下：`plugin.<name>.*`；
@@ -720,7 +720,7 @@ supervisor / main / interactive / audit / task / memory / plugin
   - `Doctor`
   - `DoctorReport`
   - CLI: `python -m advanced_agent.doctor`
-- 新增 `docs/migrations_doctor.md`。
+- 新增 `docs_graph/testing/migrations_doctor.md`。
 - 新增 `tests/core/test_migrations_doctor.py`。
 
 Doctor 当前检查：
@@ -770,7 +770,7 @@ PYTHONPATH=src .venv/bin/python -m advanced_agent.doctor --db runtime/doctor.sql
 - `InteractiveAgent` 改为通过 `PromptBuilder` 获取 quick/render prompt。
 - `MainAgent` 改为通过 `PromptBuilder` 获取 main decision prompt。
 - `RuntimeApp` 创建并注入统一 `PromptBuilder`。
-- 新增 `docs/prompt_builder.md`。
+- 新增 `docs_graph/context/prompt_builder.md`。
 - 新增 `tests/core/test_prompt_builder.py`。
 
 验证：
@@ -800,7 +800,7 @@ PYTHONPATH=src .venv/bin/python -m advanced_agent.doctor --db runtime/doctor.sql
 
 已完成：
 
-- 新增 `docs/tool_resource_model.md`。
+- 新增 `docs_graph/architecture/tool_resource_model.md`。
 - 修正 `PromptBuilder.interactive_quick`：不再说工具不可用，而是说不要声称已执行工具，实际可用工具由 runtime capability/resource 决定。
 
 后续需要实现：
@@ -837,7 +837,7 @@ PYTHONPATH=src .venv/bin/python -m advanced_agent.doctor --db runtime/doctor.sql
   - `capabilities`
   - `capability_router`
 - `PromptBuilder.main_decision` 现在注入 abstract capability list，而不是注入底层所有工具/skill。
-- 新增 `docs/capability_router.md`。
+- 新增 `docs_graph/plugins/capability_router.md`。
 - 新增 `tests/core/test_capabilities.py`。
 
 设计结论：
@@ -874,7 +874,7 @@ PYTHONPATH=src .venv/bin/python -m advanced_agent.doctor --db runtime/doctor.sql
 - `RuntimeApp.remember()` 改为走 `MemoryIndexer`。
 - `RuntimeApp` 接入 `memory_indexer`。
 - `AutomationEngine` 接入 `memory_indexer`，`HookKind.MEMORY_INDEX` 现在可自动索引 payload 里的文本。
-- 新增 `docs/memory_indexer.md`。
+- 新增 `docs_graph/memory/memory_indexer.md`。
 - 新增 `tests/integration/test_memory_indexer.py`。
 
 验证：
@@ -966,7 +966,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - `spawn_task`
 - `RuntimeApp` 接入 `capability_executor`。
 - `BackendRegistry` 增补与 executor 对齐的能力项：`task_tail`、`task_history`、`spawn_task`。
-- 新增 `docs/capability_executor.md`，记录边界，避免以后把官方 tool schema、runtime 执行逻辑、底层工具混在一起变成屎山。
+- 新增 `docs_graph/plugins/capability_executor.md`，记录边界，避免以后把官方 tool schema、runtime 执行逻辑、底层工具混在一起变成屎山。
 - 新增 `tests/core/test_capability_executor.py`，验证 task/memory/hook/spawn/audit/tool-adapter 路径。
 
 验证：
@@ -1007,7 +1007,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - main decision 写入 `main_decisions`，tool 执行记录写入 `task_requests_json`；
   - 用户侧仍由 interactive render main 结论。
 - `RuntimeApp` 给 `MainAgent` 注入 `capability_executor`。
-- 新增 `docs/main_tool_loop.md`。
+- 新增 `main_tool_loop.md` historical note; file not present in current tree。
 - 新增 `tests/integration/test_main_tool_loop.py`，用 fake model 验证：
   - main 输出官方 tool call；
   - adapter 转内部 CapabilityRequest；
@@ -1048,7 +1048,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 - 未授权 capability 默认拒绝，避免 interactive/plugin 等路径越权。
 - `interrupt_request` 增加 audit 记录；plugin hook schedule 也进入 audit 路径。
 - `spawn_task` 继续由 `Supervisor` 走 audit admission。
-- `docs/capability_executor.md` 增补 role permission 说明。
+- `docs_graph/plugins/capability_executor.md` 增补 role permission 说明。
 - `tests/core/test_capability_executor.py` 增补权限与 interrupt audit 测试。
 
 验证：
@@ -1120,7 +1120,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 - `RuntimeApp.finish_user_request_async()` 新增；
 - background interaction 现在调用 async main path：
   - `start_user_request_background()` -> `_finish_user_request_task()` -> `finish_user_request_async()`。
-- `docs/main_tool_loop.md` 增补 async model path 说明。
+- `main_tool_loop.md` historical note; file not present in current tree 增补 async model path 说明。
 - `tests/integration/test_main_tool_loop.py` 增补 async fake model 测试，确保 background main 使用 async tool loop 而不是 sync fallback。
 
 验证：
@@ -1160,7 +1160,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - `/context`；
   - `/clear-before MS`；
   - `/rollback-to MS`。
-- 新增 `docs/session_lifecycle.md`。
+- 新增 `docs_graph/runtime/session_lifecycle.md`。
 - 新增 `tests/core/test_session_context_lifecycle.py`。
 
 语义边界：
@@ -1289,7 +1289,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - `ContextFork`；
   - `ContextForkBuilder`。
 - `RuntimeApp` 接入 `context_fork_builder`。
-- `docs/context_forking.md` 记录设计：
+- `docs_graph/context/context_forking.md` 记录设计：
   - parent session/request/goal；
   - recent user-visible context；
   - retrieved vector memories；
@@ -1601,7 +1601,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 
 本轮完成第一版项目级 runtime tool bridge：
 
-- 新增 `docs/mcp_runtime_bridge.md`：
+- 新增 `docs_graph/codex/mcp_runtime_bridge.md`：
   - 解释 MCP 和 toolcall 的关系：MCP 是工具提供协议，toolcall 是模型调用动作格式；
   - Codex/MCP client 发现 MCP server tools，把它们呈现给模型，模型发 toolcall 后再调用 MCP tool；
   - Advanced Agent 应作为本项目局部 MCP/tool provider，不做全局 skill。
@@ -1657,7 +1657,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - 输入：`query`、`session_id`、`scope`、`recent_limit`、`memory_top_k`；
   - 输出：recent user-visible context lines + vector memory hits；
   - 附带 instruction：先使用该上下文，不足再调用更具体工具。
-- `docs/mcp_runtime_bridge.md` 增补 Context maintenance mode：
+- `docs_graph/codex/mcp_runtime_bridge.md` 增补 Context maintenance mode：
   - 自动注入路径；
   - MCP/Codex on-demand tool 路径；
   - 不完全依赖“模型记得搜索记忆”。
@@ -1729,7 +1729,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - 将终端字节流 tee 到 `runtime/codex_interactive/*.terminal.log`；
   - Codex 退出后，把 transcript tail 作为 `codex_interactive_log` 通过 `MemoryIndexer` 入库；
   - 发布 `codex.interactive.logged` event。
-- 新增 `docs/enhanced_interactive_codex.md`。
+- 新增 `docs_graph/codex/enhanced_interactive_codex.md`。
 - 新增 `tests/core/test_codex_interactive_wrapper.py`。
 
 运行方式：
@@ -1775,7 +1775,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - `timer.schedule`
   - `event.wait`
 - `RuntimeToolBridge` 的记忆读写改为走 `MemoryService`，`memory.search` 返回带 content snippet 的 hydrated record，不再只返回向量 hit 元数据。
-- 新增 `docs/codex_mcp_memory_quickstart.md`，记录 Codex MCP 注册命令和 smoke test。
+- 新增 `docs_graph/codex/codex_mcp_memory_quickstart.md`，记录 Codex MCP 注册命令和 smoke test。
 - `pyproject.toml` 加入 `mcp>=1.27`。
 
 验证：
@@ -1803,7 +1803,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 - `pyproject.toml` 增加 console scripts：
   - `advanced-agent-codex = advanced_agent.codex_interactive:main`
   - `advanced-agent-mcp = advanced_agent.mcp_server:main`
-- 文档更新：`docs/enhanced_interactive_codex.md` 和 `docs/codex_mcp_memory_quickstart.md` 都改为优先使用自有 wrapper 入口。
+- 文档更新：`docs_graph/codex/enhanced_interactive_codex.md` 和 `docs_graph/codex/codex_mcp_memory_quickstart.md` 都改为优先使用自有 wrapper 入口。
 
 推荐入口：
 
@@ -1905,7 +1905,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
   - schema version 升到 2。
   - v1 -> v2 自动 `ALTER TABLE memory_vectors ADD COLUMN label_text`。
 - 文档：
-  - 新增 `docs/memory_auto_injection.md`。
+  - 新增 `docs_graph/memory/memory_auto_injection.md`。
 
 验证：
 
@@ -1939,7 +1939,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 - `pyproject.toml` 也声明了 console script：
   - `codexx = advanced_agent.codex_interactive:main`
 - `AGENTS.md` 和 `PromptBuilder` 已强化：相量数据库是可信的长期项目记忆；如果 `context_get/memory_search` 命中相关内容，不要轻易说没有上下文。
-- 新增文档：`docs/codexx_entrypoint.md`。
+- 新增文档：`docs_graph/codex/codexx_entrypoint.md`。
 - README 增加推荐入口说明。
 
 现在推荐启动方式：
@@ -2003,7 +2003,7 @@ env -u VIRTUAL_ENV PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" codexx -
 
 用户要求记录所有对系统的变更，并提供移除 bash。
 
-已记录：`docs/system_changes.md`
+已记录：`docs_graph/operations/system_changes.md`
 
 当前系统/用户级变更只有 `~/.local/bin` 下的用户级 symlink：
 
@@ -2060,10 +2060,10 @@ bash scripts/remove_guidance.sh --project-local
   用作 raw dialogue 的 bounded ring-buffer-like tail；默认不把全部 raw history 注入 prompt。
 - main prompt 已提示：如果需要更多原始最近消息，应调用 `session.raw_tail/session_raw_tail`，不要要求用户重述。
 - 文档更新：
-  - `docs/memory_design.md`
-  - `docs/memory_auto_injection.md`
-  - `docs/vector_memory.md`
-  - `docs/memory_indexer.md`
+  - `docs_graph/memory/memory_design.md`
+  - `docs_graph/memory/memory_auto_injection.md`
+  - `docs_graph/memory/vector_memory.md`
+  - `docs_graph/memory/memory_indexer.md`
 
 验证：
 
@@ -2094,7 +2094,7 @@ bash scripts/remove_guidance.sh --project-local
   - `/pwd`
   - `/cd PATH`
 - main agent rule/tool path 能处理 `cd ...` / `/cd ...`，模型工具列表也包含 `workdir_chdir`。
-- 新增文档：`docs/workdir_control.md`。
+- 新增文档：`docs_graph/runtime/workdir_control.md`。
 
 验证：
 
@@ -2111,7 +2111,7 @@ bash scripts/remove_guidance.sh --project-local
 
 已新增文档：
 
-- `docs/codex_wrapper_components.md`
+- `docs_graph/codex/codex_wrapper_components.md`
 
 记录内容：
 
@@ -2127,7 +2127,7 @@ bash scripts/remove_guidance.sh --project-local
   - defaults/config
   - MCP/runtime tool layer
   - runtime log/SQLite 输出
-  - docs/tests/system-change cleanup
+  - docs_graph/testing and docs_graph/operations cleanup
 - 下一步升级建议：
   1. 抽 `CodexWrapperConfig`，减少 `bin/codexx`、`defaults.py`、`codex_interactive.py` 的默认值分散；
   2. 增加 `codexx --doctor` 或 `advanced-agent doctor codexx`；
@@ -2229,7 +2229,7 @@ bash scripts/remove_guidance.sh --project-local
   - `run_interactive_codex(..., bootstrap_chars=1200)` 默认启用；
   - CLI 新增 `--bootstrap-chars`，也可用环境变量 `ADVANCED_AGENT_BOOTSTRAP_CHARS`；
   - `--bootstrap-chars 0` 可关闭。
-- `docs/codexx_entrypoint.md`
+- `docs_graph/codex/codexx_entrypoint.md`
   - 记录 startup bootstrap context 行为和关闭方式。
 
 验证：
