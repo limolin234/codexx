@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 DEFAULT_DB = "runtime/advanced_agent.sqlite"
+DEFAULT_MEMORY_DB = "memory/longterm.sqlite"
+DEFAULT_RAWTAIL_DB = "memory/rawtail.sqlite"
+DEFAULT_RAWTAIL_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_CONFIG = ".env.json"
 DEFAULT_LOG_DIR = "runtime/codex_interactive"
 DEFAULT_SESSION_TITLE = "default"
@@ -23,6 +26,22 @@ def default_db() -> str:
 
 def default_config() -> str:
     return env_default("ADVANCED_AGENT_CONFIG", DEFAULT_CONFIG)
+
+
+def default_memory_db() -> str:
+    return env_default("ADVANCED_AGENT_MEMORY_DB", DEFAULT_MEMORY_DB)
+
+
+def default_rawtail_db() -> str:
+    return env_default("ADVANCED_AGENT_RAWTAIL_DB", DEFAULT_RAWTAIL_DB)
+
+
+def default_rawtail_max_bytes() -> int:
+    value = env_default("ADVANCED_AGENT_RAWTAIL_MAX_BYTES", str(DEFAULT_RAWTAIL_MAX_BYTES))
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return DEFAULT_RAWTAIL_MAX_BYTES
 
 
 def default_log_dir() -> str:

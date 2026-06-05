@@ -306,15 +306,6 @@ CREATE TABLE IF NOT EXISTS audit_reviews (
 );
 
 
-CREATE TABLE IF NOT EXISTS user_profiles (
-  id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  updated_at_ms INTEGER NOT NULL,
-  confidence REAL NOT NULL,
-  max_chars INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS prompt_overlays (
   id TEXT PRIMARY KEY,
   scope TEXT NOT NULL,
@@ -329,63 +320,6 @@ CREATE TABLE IF NOT EXISTS prompt_overlays (
 );
 
 CREATE INDEX IF NOT EXISTS idx_prompt_overlays_scope_agent ON prompt_overlays(scope, target_agent, status, priority);
-
-CREATE TABLE IF NOT EXISTS memory_items (
-  id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL,
-  type TEXT NOT NULL,
-  title TEXT,
-  summary TEXT NOT NULL,
-  content TEXT,
-  confidence REAL NOT NULL,
-  importance REAL NOT NULL,
-  status TEXT NOT NULL,
-  created_at_ms INTEGER NOT NULL,
-  updated_at_ms INTEGER NOT NULL,
-  expires_at_ms INTEGER,
-  source_ref TEXT,
-  source_strength TEXT NOT NULL DEFAULT 'unknown',
-  stability TEXT NOT NULL DEFAULT 'normal',
-  usage_count INTEGER NOT NULL DEFAULT 0,
-  last_used_at_ms INTEGER,
-  last_evidence_at_ms INTEGER,
-  supersedes_id TEXT,
-  superseded_by TEXT,
-  archived_at_ms INTEGER,
-  metadata_json TEXT
-);
-
-CREATE TABLE IF NOT EXISTS memory_vectors (
-  id TEXT PRIMARY KEY,
-  memory_id TEXT NOT NULL,
-  label_kind TEXT NOT NULL,
-  vector_collection TEXT NOT NULL,
-  vector_id TEXT NOT NULL,
-  embedding_model TEXT,
-  label_text TEXT,
-  content_hash TEXT,
-  created_at_ms INTEGER NOT NULL,
-  FOREIGN KEY(memory_id) REFERENCES memory_items(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS memory_facets (
-  memory_id TEXT NOT NULL,
-  facet_name TEXT NOT NULL,
-  facet_text TEXT NOT NULL,
-  weight REAL NOT NULL DEFAULT 1.0,
-  created_at_ms INTEGER NOT NULL,
-  PRIMARY KEY(memory_id, facet_name),
-  FOREIGN KEY(memory_id) REFERENCES memory_items(id) ON DELETE CASCADE
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-  memory_id UNINDEXED,
-  scope UNINDEXED,
-  type UNINDEXED,
-  summary,
-  content,
-  facets
-);
 
 CREATE TABLE IF NOT EXISTS session_injection_ledger (
   id TEXT PRIMARY KEY,
@@ -404,7 +338,5 @@ CREATE INDEX IF NOT EXISTS idx_stream_request_seq ON interaction_streams(request
 CREATE INDEX IF NOT EXISTS idx_tasks_session_updated ON tasks(session_id, updated_at_ms);
 CREATE INDEX IF NOT EXISTS idx_task_output_task_seq ON task_output_chunks(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_control_status_priority ON control_commands(status, priority, created_at_ms);
-CREATE INDEX IF NOT EXISTS idx_memory_scope_type ON memory_items(scope, type, status);
-CREATE INDEX IF NOT EXISTS idx_memory_facets_name ON memory_facets(facet_name, memory_id);
 CREATE INDEX IF NOT EXISTS idx_injection_ledger_session ON session_injection_ledger(session_id, caller_session_id, item_kind);
 """

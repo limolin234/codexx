@@ -36,7 +36,7 @@ class Doctor:
             version = MigrationRunner(app.db.conn).version()
             checks["schema_version"] = version == CURRENT_SCHEMA_VERSION
             details["schema_version"] = f"{version}/{CURRENT_SCHEMA_VERSION}"
-            checks["sqlite_vec"] = bool(app.db.query_one("SELECT vec_version() AS v"))
+            checks["sqlite_vec"] = bool(app.memory_db.query_one("SELECT vec_version() AS v"))
             details["sqlite_vec"] = "ok"
         except Exception as exc:
             checks["sqlite"] = False

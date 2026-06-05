@@ -5,7 +5,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from advanced_agent.migrations import MigrationRunner
 
@@ -16,12 +16,13 @@ class SQLiteStore:
     Agents should depend on higher-level stores/contexts, not this class.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, schema_initializer: Callable[[sqlite3.Connection], object] | None = None) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(self.path, timeout=30.0, isolation_level=None, check_same_thread=False)
         self._transaction_depth = 0
+        self._schema_initializer = schema_initializer
         self.conn.row_factory = sqlite3.Row
         with self._lock:
             self.conn.execute("PRAGMA foreign_keys = ON")
@@ -32,7 +33,10 @@ class SQLiteStore:
 
     def init_schema(self) -> None:
         with self._lock:
-            MigrationRunner(self.conn).migrate()
+            if self._schema_initializer is not None:
+                self._schema_initializer(self.conn)
+            else:
+                MigrationRunner(self.conn).migrate()
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         with self._lock:

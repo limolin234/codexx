@@ -14,6 +14,8 @@ flowchart LR
   W -->|temporary -c config only| MCP[Advanced Agent MCP server]
   C -->|MCP tool calls| MCP
   MCP --> DB[(runtime/advanced_agent.sqlite)]
+  MCP --> MEM[(memory/longterm.sqlite)]
+  MCP --> RAW[(memory/rawtail.sqlite)]
 
   W -->|cleaned bounded log| FS[runtime/codex_interactive/*.terminal.log]
   W -->|combined model instructions file| INST[runtime/codex_interactive/*.instructions.md]
@@ -37,8 +39,10 @@ flowchart LR
 ```mermaid
 flowchart TB
   subgraph Files[Filesystem]
-    LOGS[runtime/codex_interactive/*.terminal.log<br/>cleaned, max 5 MiB each]
+    LOGS[runtime/codex_interactive/*.terminal.log<br/>diagnostic, max 5 MiB each]
     INSTR[runtime/codex_interactive/*.instructions.md<br/>small generated instruction files]
+    MEMDB[memory/longterm.sqlite<br/>durable memory, user-migratable]
+    RAWDB[memory/rawtail.sqlite<br/>cleaned raw tail, bounded about 10 MiB]
   end
 
   subgraph SQLite[runtime/advanced_agent.sqlite]
@@ -47,8 +51,7 @@ flowchart TB
     SUMS[semantic_summaries<br/>small-model/runtime compression]
     TASKS[semantic_tasks<br/>compaction task state]
     CANDS[semantic_memory_candidates<br/>candidate approval state]
-    MEM[memory_items + vectors + FTS<br/>approved durable memory]
-    MSG[messages / interaction_streams<br/>raw tail / ordinary session context]
+    MSG[messages / interaction_streams<br/>ordinary session context]
   end
 
   subgraph WAL[SQLite WAL files]
@@ -59,10 +62,10 @@ flowchart TB
 
 当前限制/策略：
 
-- `runtime/codex_interactive` 只保留最近 32 个 Codex session。
-- 每个 `.terminal.log` 是清洗后的 TTY 内容，最大 5 MiB。
-- `semantic_events/summaries/tasks/candidates` 是 runtime 状态，不是长期记忆。
-- 只有 `memory_items` 是 durable long-term memory。
+- `memory/longterm.sqlite` 是长期记忆主库，属于用户可迁移资产。
+- `memory/rawtail.sqlite` 是清洗后的 bounded raw-tail 缓存，目标上限约 10 MiB；它是证据窗口，不是长期语义记忆。
+- `runtime/advanced_agent.sqlite` 只承载任务、hooks、session、semantic 清洗和候选状态等运行时数据。
+- `runtime/codex_interactive` 只保留最近 32 个 Codex session 的诊断文件；迁移设备时可丢。
 - SQLite WAL 可能临时变大，属于正常 WAL 行为，可通过 checkpoint 收缩。
 
 ## 3. 数据处理主流程

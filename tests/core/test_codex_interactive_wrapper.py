@@ -147,7 +147,7 @@ def test_codex_log_tail_buffers_raw_tail_without_durable_memory(tmp_path) -> Non
     records = app.memory.recent(scope="project:advanced_agent", limit=5)
     assert all(record.type != "codex_interactive_log" for record in records)
     assert all("Codex wrapper closing ring-buffer handoff" not in record.summary for record in records)
-    raw_tail = app.sessions.raw_tail_lines(sid, limit=5, max_chars=300)
+    raw_tail = app.raw_tail_lines(sid, limit=5, max_chars=300)
     assert any("message/codex_tail" in line and "working" in line for line in raw_tail)
     events = app.events.store.recent(5)
     assert any(event.type == "codex.interactive.tail_buffered" for event in events)
@@ -158,7 +158,7 @@ def test_append_codex_tail_to_ring_buffer_is_idempotent(tmp_path) -> None:
     sid = app.default_session()
     _append_codex_tail_to_ring_buffer(app, sid, "codexsess_test", "latest terminal cache")
     _append_codex_tail_to_ring_buffer(app, sid, "codexsess_test", "latest terminal cache")
-    lines = app.sessions.raw_tail_lines(sid, limit=10, max_chars=200)
+    lines = app.raw_tail_lines(sid, limit=10, max_chars=200)
     assert sum("message/codex_tail" in line and "latest terminal cache" in line for line in lines) == 1
 
 

@@ -347,6 +347,6 @@ def test_runtime_tool_bridge_internal_memory_cleanup_tools(tmp_path) -> None:
     assert app.memory.deactivate(written.memory_id, status="deleted")
     archived = bridge.call("memory.archive_inactive_indexes", {"limit": 5})
     assert archived["ok"] and archived["archived"] == 1
-    app.db.execute("UPDATE memory_items SET status='deleted', updated_at_ms=? WHERE id=?", (app.time.wall_ms(), written.memory_id))
+    app.memory_db.execute("UPDATE memory_items SET status='deleted', updated_at_ms=? WHERE id=?", (app.time.wall_ms(), written.memory_id))
     purged = bridge.call("memory.purge_deleted", {"older_than_ms": app.time.wall_ms() + 1, "limit": 5})
     assert purged["ok"] and purged["purged"] == 1

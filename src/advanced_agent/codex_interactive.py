@@ -80,13 +80,15 @@ Rules:
 """
 
 
-def build_codex_env(app: RuntimeApp, session_id: str, db_path: str, log_path: Path, project_root: str | Path | None = None) -> dict[str, str]:
+def build_codex_env(app: RuntimeApp, session_id: str, db_path: str, log_path: Path, project_root: str | Path | None = None, memory_db_path: str | Path | None = None, rawtail_db_path: str | Path | None = None) -> dict[str, str]:
     project_root_path = Path(project_root) if project_root is not None else _package_project_root()
     env = os.environ.copy()
     env.update({
         "ADVANCED_AGENT_SESSION": session_id,
         "ADVANCED_AGENT_DB": str(db_path),
         "ADVANCED_AGENT_CODEX_LOG": str(log_path),
+        "ADVANCED_AGENT_MEMORY_DB": str(memory_db_path or app.memory_db.path),
+        "ADVANCED_AGENT_RAWTAIL_DB": str(rawtail_db_path or app.rawtail_db.path),
         "ADVANCED_AGENT_ROOT": str(project_root_path),
         "ADVANCED_AGENT_PROJECT_ROOT": str(project_root_path),
         "ADVANCED_AGENT_LAUNCH_CWD": str(Path.cwd()),
@@ -193,6 +195,8 @@ def codex_mcp_config_args(
     server_name: str | None = None,
     project_root: str | Path | None = None,
     launch_cwd: str | Path | None = None,
+    memory_db_path: str | Path | None = None,
+    rawtail_db_path: str | Path | None = None,
 ) -> list[str]:
     """Return Codex `-c` overrides for the project-local MCP server.
 
@@ -204,6 +208,8 @@ def codex_mcp_config_args(
     project_root_path = Path(project_root) if project_root is not None else _package_project_root()
     launch_cwd_path = Path(launch_cwd) if launch_cwd is not None else Path.cwd()
     config_path = config_path if config_path is not None else defaults.default_config()
+    memory_db_path = memory_db_path if memory_db_path is not None else defaults.default_memory_db()
+    rawtail_db_path = rawtail_db_path if rawtail_db_path is not None else defaults.default_rawtail_db()
     server_name = server_name or defaults.default_mcp_server_name()
     server = f"mcp_servers.{server_name}"
     args = [
@@ -212,7 +218,7 @@ def codex_mcp_config_args(
         "-c",
         f'{server}.args=["-m","advanced_agent.mcp_server","--db","{db_path}","--config","{config_path or ""}"]',
         "-c",
-        f'{server}.env={{PYTHONPATH="{project_root_path / "src"}",ADVANCED_AGENT_DB="{db_path}",ADVANCED_AGENT_CONFIG="{config_path or ""}",ADVANCED_AGENT_SCOPE="{defaults.default_scope()}",ADVANCED_AGENT_MEMORY_TRUST="high",ADVANCED_AGENT_LAUNCH_CWD="{launch_cwd_path}"}}',
+        f'{server}.env={{PYTHONPATH="{project_root_path / "src"}",ADVANCED_AGENT_DB="{db_path}",ADVANCED_AGENT_MEMORY_DB="{memory_db_path}",ADVANCED_AGENT_RAWTAIL_DB="{rawtail_db_path}",ADVANCED_AGENT_CONFIG="{config_path or ""}",ADVANCED_AGENT_SCOPE="{defaults.default_scope()}",ADVANCED_AGENT_MEMORY_TRUST="high",ADVANCED_AGENT_LAUNCH_CWD="{launch_cwd_path}"}}',
         "-c",
         f'{server}.cwd="{launch_cwd_path}"',
     ]
@@ -228,7 +234,7 @@ def build_bootstrap_prompt(app: RuntimeApp, session_id: str, max_chars: int = 12
     """
 
     max_chars = max(0, int(max_chars))
-    lines = app.sessions.raw_tail_lines(session_id, limit=40, max_chars=400, include_compacted=True)
+    lines = app.raw_tail_lines(session_id, limit=40, max_chars=400)
     selected: list[str] = []
     total = 0
     for line in reversed(lines):
@@ -330,7 +336,7 @@ def run_interactive_codex(
         project_root=project_root_path,
     )
     instruction_args = ["-c", f'model_instructions_file="{instruction_path}"']
-    injected_args = codex_mcp_config_args(db_path, config_path, project_root=project_root_path, launch_cwd=app.workspace.cwd) if enable_mcp else []
+    injected_args = codex_mcp_config_args(db_path, config_path, project_root=project_root_path, launch_cwd=app.workspace.cwd, memory_db_path=app.memory_db.path, rawtail_db_path=app.rawtail_db.path) if enable_mcp else []
     if bootstrap_chars > 0 and should_inject_bootstrap(codex_args):
         codex_args = [*codex_args, build_bootstrap_prompt(app, session_id, max_chars=bootstrap_chars)]
     command = ["codex", *instruction_args, *injected_args, *codex_args]
@@ -344,7 +350,7 @@ def run_interactive_codex(
     try:
         returncode = _run_pty(
             command,
-            build_codex_env(app, session_id, db_path, log_path, project_root_path),
+            build_codex_env(app, session_id, db_path, log_path, project_root_path, app.memory_db.path, app.rawtail_db.path),
             log_path,
             child_cwd_callback=lambda cwd: app.chdir(str(cwd)),
             semantic_input_callback=lambda data: _record_semantic_input(app, session_id, semantic_ring, input_tracker, data),
@@ -358,6 +364,7 @@ def run_interactive_codex(
         _enqueue_semantic_maintenance(app, session_id, reason="session_close", force=True)
         _prune_codex_interactive_logs(app, log_root, keep_sessions=DEFAULT_CODEX_LOG_SESSION_RETENTION)
         background_runtime.stop()
+        app.close()
     return CodexInteractiveSession(session_id=session_id, codex_session_id=codex_session_id, log_path=log_path, returncode=returncode)
 
 
@@ -704,16 +711,16 @@ def _append_codex_tail_to_ring_buffer(app: RuntimeApp, session_id: str, codex_se
     if not tail:
         return
     request_id = f"codex-close-{codex_session_id}"
-    existing = app.sessions.message_for_request(session_id, request_id, role="codex_tail")
-    if existing is not None:
+    if app.rawtail.has_request(session_id, request_id, role="codex_tail"):
         return
-    app.sessions.append_message(Message(
+    app.rawtail.append_chunk(
         session_id=session_id,
-        request_id=request_id,
+        source="message",
         role="codex_tail",
-        content=tail,
+        text=tail,
+        request_id=request_id,
         created_at_ms=app.time.wall_ms(),
-    ))
+    )
 
 
 def main() -> None:
@@ -731,7 +738,7 @@ def main() -> None:
     project_root = Path(args.project_root) if args.project_root else _package_project_root()
     db_path = _resolve_runtime_path(args.db, project_root)
     config_path = _resolve_runtime_path(args.config, project_root)
-    app = RuntimeApp.create(db_path, config_path=config_path)
+    app = RuntimeApp.create(db_path, config_path=config_path, memory_db_path=_resolve_runtime_path(defaults.default_memory_db(), project_root), rawtail_db_path=_resolve_runtime_path(defaults.default_rawtail_db(), project_root))
     result = run_interactive_codex(app, str(db_path), codex_args, log_dir=args.log_dir, session_title=args.session_title, config_path=str(config_path), enable_mcp=not args.no_mcp, project_root=project_root, bootstrap_chars=args.bootstrap_chars)
     print(f"\n[advanced_agent] codex session logged: {result.log_path} rc={result.returncode}")
     raise SystemExit(result.returncode)

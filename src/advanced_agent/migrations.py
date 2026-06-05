@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from advanced_agent.stores.schema import SCHEMA_SQL
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 @dataclass(slots=True)
@@ -49,6 +49,8 @@ class MigrationRunner:
                 self._migrate_to_v6()
             if current < 7:
                 self._migrate_to_v7()
+            if current < 8:
+                self._migrate_to_v8()
             self._set_version(CURRENT_SCHEMA_VERSION)
             upgraded = True
             current = CURRENT_SCHEMA_VERSION
@@ -69,6 +71,8 @@ class MigrationRunner:
         )
 
     def _migrate_to_v2(self) -> None:
+        if not self._table_exists("memory_vectors"):
+            return
         columns = {row[1] for row in self.conn.execute("PRAGMA table_info(memory_vectors)").fetchall()}
         if "label_text" not in columns:
             self.conn.execute("ALTER TABLE memory_vectors ADD COLUMN label_text TEXT")
@@ -319,6 +323,28 @@ class MigrationRunner:
                 seen.add(text)
                 parts.append(text)
         return "\n".join(parts)
+
+
+    def _migrate_to_v8(self) -> None:
+        """Runtime DB no longer owns durable memory/profile tables.
+
+        Durable memory lives under memory/longterm.sqlite. Raw-tail lives under
+        memory/rawtail.sqlite. The runtime database keeps task, hook, session,
+        and semantic worker state only. Users who need old memory data should
+        migrate it before upgrading or restore it into memory/ manually.
+        """
+        for table in (
+            "vec_memory",
+            "memory_fts",
+            "memory_facets",
+            "memory_vectors",
+            "memory_items",
+            "user_profiles",
+        ):
+            try:
+                self.conn.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception:
+                pass
 
     def _table_exists(self, name: str) -> bool:
         row = self.conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','virtual table') AND name=?", (name,)).fetchone()

@@ -20,8 +20,10 @@ class RuntimeService:
         db_path: str | Path,
         config_path: str | Path | None = None,
         loop_config: RuntimeLoopConfig | None = None,
+        memory_db_path: str | Path | None = None,
+        rawtail_db_path: str | Path | None = None,
     ) -> "RuntimeService":
-        app = RuntimeApp.create(db_path, config_path=config_path)
+        app = RuntimeApp.create(db_path, config_path=config_path, memory_db_path=memory_db_path, rawtail_db_path=rawtail_db_path)
         return cls(app=app, loop=RuntimeLoop(app, loop_config))
 
     async def start(self) -> None:

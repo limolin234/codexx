@@ -6,13 +6,16 @@ __pycache__/
 .venv/
 .venv_py38/
 src/advanced_agent.egg-info/
-runtime/
-runtime/*.sqlite
-runtime/*.sqlite-*
-runtime/codex_interactive/*.terminal.log
-runtime/codex_interactive/*.instructions.md
+/runtime/
+/runtime/*.sqlite
+/runtime/*.sqlite-*
+/runtime/codex_interactive/*.terminal.log
+/runtime/codex_interactive/*.instructions.md
 .env.json
 .env.*.json
 !.env.example.json
 
-runtime/*.bak
+/runtime/*.bak
+/memory/
+/memory/*.sqlite
+/memory/*.sqlite-*

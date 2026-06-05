@@ -130,11 +130,10 @@ class RuntimeToolBridge:
             return {
                 "ok": True,
                 "session_id": session_id,
-                "lines": self.app.sessions.raw_tail_lines(
+                "lines": self.app.raw_tail_lines(
                     session_id,
                     limit=int(args.get("limit", 80)),
                     max_chars=int(args.get("max_chars", 800)),
-                    include_compacted=bool(args.get("include_compacted", True)),
                 ),
                 "instruction": "Raw tail is a bounded ring-buffer-like dialogue tail for inspection only; use vector memory for durable semantics.",
             }

@@ -22,11 +22,18 @@ def create_mcp(db_path: str | Path | None = None, config_path: str | Path | None
     same memory/context/task implementation.
     """
 
-    db_path = db_path or defaults.default_db()
     config_path = config_path if config_path is not None else defaults.default_config()
+    explicit_db_path = db_path is not None
+    db_path = Path(db_path or defaults.default_db())
+    env_db = os.environ.get("ADVANCED_AGENT_DB")
+    use_env_sidecar_paths = not explicit_db_path or (env_db is not None and Path(env_db) == db_path)
+    memory_db_path = defaults.default_memory_db() if use_env_sidecar_paths and os.environ.get("ADVANCED_AGENT_MEMORY_DB") else None
+    rawtail_db_path = defaults.default_rawtail_db() if use_env_sidecar_paths and os.environ.get("ADVANCED_AGENT_RAWTAIL_DB") else None
     app = RuntimeApp.create(
         db_path,
         config_path=config_path,
+        memory_db_path=memory_db_path,
+        rawtail_db_path=rawtail_db_path,
         initial_cwd=os.environ.get("ADVANCED_AGENT_LAUNCH_CWD"),
         sync_process_cwd=True,
     )
