@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from advanced_agent.stores.schema import SCHEMA_SQL
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 @dataclass(slots=True)
@@ -51,6 +51,8 @@ class MigrationRunner:
                 self._migrate_to_v7()
             if current < 8:
                 self._migrate_to_v8()
+            if current < 9:
+                self._migrate_to_v9()
             self._set_version(CURRENT_SCHEMA_VERSION)
             upgraded = True
             current = CURRENT_SCHEMA_VERSION
@@ -333,18 +335,49 @@ class MigrationRunner:
         and semantic worker state only. Users who need old memory data should
         migrate it before upgrading or restore it into memory/ manually.
         """
-        for table in (
-            "vec_memory",
+        self._drop_runtime_memory_tables()
+
+    def _migrate_to_v9(self) -> None:
+        """Remove sqlite-vec shadow tables left behind in upgraded runtime DBs."""
+        self._drop_runtime_memory_tables()
+
+    def _drop_runtime_memory_tables(self) -> None:
+        # Runtime DB no longer owns durable memory.  Drop both first-class memory
+        # tables and sqlite virtual-table shadows.  Some deployed DBs kept the
+        # vec0 shadow tables after v8 because the virtual table module was not
+        # necessarily loaded while migration ran.
+        tables = (
             "memory_fts",
+            "memory_fts_config",
+            "memory_fts_content",
+            "memory_fts_data",
+            "memory_fts_docsize",
+            "memory_fts_idx",
             "memory_facets",
             "memory_vectors",
             "memory_items",
             "user_profiles",
-        ):
+            "vec_memory",
+            "vec_memory_chunks",
+            "vec_memory_info",
+            "vec_memory_rowids",
+            "vec_memory_vector_chunks00",
+        )
+        for table in tables:
             try:
-                self.conn.execute(f"DROP TABLE IF EXISTS {table}")
+                self.conn.execute(f'DROP TABLE IF EXISTS "{table}"')
             except Exception:
                 pass
+        leftovers = [table for table in tables if self._table_exists(table)]
+        if leftovers:
+            # If the vec0/fts module is unavailable, SQLite can refuse DROP TABLE
+            # for virtual tables.  At that point these runtime-side memory tables
+            # are already obsolete metadata, so remove their sqlite_schema rows
+            # directly to finish the runtime/memory split migration.
+            self.conn.execute("PRAGMA writable_schema=ON")
+            placeholders = ",".join("?" for _ in leftovers)
+            self.conn.execute(f"DELETE FROM sqlite_schema WHERE name IN ({placeholders})", leftovers)
+            self.conn.execute("PRAGMA writable_schema=OFF")
 
     def _table_exists(self, name: str) -> bool:
         row = self.conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','virtual table') AND name=?", (name,)).fetchone()
