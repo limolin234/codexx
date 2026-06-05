@@ -84,7 +84,11 @@ class AutomationEngine:
             scope = hook.payload.get("scope", "project:advanced_agent")
             if not session_id:
                 return "preference_skipped_missing_session"
-            profile_id = self.preferences.update_from_session(session_id, scope=scope)
+            profile_id = self.preferences.update_from_session(
+                session_id,
+                scope=scope,
+                allow_major_write=bool(hook.payload.get("allow_major_write", False)),
+            )
             return f"preference_updated:{profile_id}"
         if hook.kind == HookKind.CHECK_STATE:
             return "main_check_state_requested"
@@ -125,6 +129,7 @@ class AutomationEngine:
             result = self.memory_maintenance.run(
                 session_id=hook.payload.get("session_id"),
                 scope=hook.payload.get("scope", "project:advanced_agent"),
+                allow_major_write=bool(hook.payload.get("allow_major_write", False)),
                 raw_retention_ms=int(hook.payload.get("raw_retention_ms", 7 * 24 * 60 * 60 * 1000)),
                 deleted_retention_ms=int(hook.payload.get("deleted_retention_ms", 30 * 24 * 60 * 60 * 1000)),
                 archive_grace_ms=int(hook.payload.get("archive_grace_ms", 0)),

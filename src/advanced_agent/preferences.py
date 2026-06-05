@@ -19,9 +19,10 @@ class PreferenceLimits:
     category_chars: int = 280
     overlay_chars: int = 600
     max_vector_traits: int = 12
-    recent_evidence_limit: int = 6
+    recent_evidence_limit: int = 32
     maintenance_min_interval_ms: int = 10 * 60 * 1000
     maintenance_min_new_messages: int = 4
+    major_write_min_new_messages: int = 24
 
 
 class PreferenceWorker:
@@ -54,14 +55,20 @@ class PreferenceWorker:
         self.maintainer = maintainer or DeterministicProfileMaintainer(category_chars=self.limits.category_chars)
         self.major_writer = major_writer or MajorModelMemoryWriter(None)
 
-    def update_from_session(self, session_id: str, scope: str = "project:advanced_agent") -> str:
+    def update_from_session(self, session_id: str, scope: str = "project:advanced_agent", *, allow_major_write: bool = True) -> str:
         evidence = self._recent_user_evidence(session_id)
         existing_traits = self._existing_traits(scope)
-        if self._should_run_profile_maintenance(session_id, scope, evidence):
+        if allow_major_write or self._should_run_profile_maintenance(session_id, scope, evidence):
             observer_patches = self.maintainer.propose(evidence=evidence, existing_traits=existing_traits, scope=scope)
-            patches = self._authorize_profile_patches(scope=scope, evidence=evidence, existing_traits=existing_traits, observer_patches=observer_patches)
+            major_write_allowed = allow_major_write or self._should_run_major_write(session_id, scope, evidence)
+            if major_write_allowed:
+                patches = self._authorize_profile_patches(scope=scope, evidence=evidence, existing_traits=existing_traits, observer_patches=observer_patches)
+            elif getattr(self.maintainer, "requires_major_model_write", False):
+                patches = []
+            else:
+                patches = observer_patches
             self._apply_profile_patches(scope=scope, patches=patches)
-            self._record_profile_maintenance_state(session_id, scope, evidence)
+            self._record_profile_maintenance_state(session_id, scope, evidence, major_write_allowed=major_write_allowed)
 
         lines = self._vector_profile_lines(scope)
         if not lines:
@@ -135,6 +142,22 @@ class PreferenceWorker:
             return True
         return now - last_run_ms >= self.limits.maintenance_min_interval_ms and new_count > 0
 
+    def _should_run_major_write(self, session_id: str, scope: str, evidence: list[ProfileEvidence]) -> bool:
+        state = self._profile_maintenance_state(session_id, scope)
+        last_major_message_id = str(state.get("last_major_message_id", ""))
+        if not evidence:
+            return False
+        new_count = 0
+        seen_last = not last_major_message_id
+        for item in evidence:
+            if item.message_id == last_major_message_id:
+                seen_last = True
+                new_count = 0
+                continue
+            if seen_last:
+                new_count += 1
+        return new_count >= self.limits.major_write_min_new_messages
+
     def _profile_maintenance_state(self, session_id: str, scope: str) -> dict:
         row = self.overlays.db.query_one(
             "SELECT content FROM prompt_overlays WHERE scope=? AND target_agent=? AND category=? AND status='active' ORDER BY updated_at_ms DESC LIMIT 1",
@@ -148,16 +171,27 @@ class PreferenceWorker:
         except Exception:
             return {}
 
-    def _record_profile_maintenance_state(self, session_id: str, scope: str, evidence: list[ProfileEvidence]) -> None:
+    def _record_profile_maintenance_state(self, session_id: str, scope: str, evidence: list[ProfileEvidence], *, major_write_allowed: bool = False) -> None:
         if not evidence:
             return
         last_message_id = evidence[-1].message_id or ""
         now = self.time.wall_ms()
+        previous = self._profile_maintenance_state(session_id, scope)
+        payload = {
+            "session_id": session_id,
+            "last_message_id": last_message_id,
+            "last_run_ms": now,
+            "last_major_message_id": previous.get("last_major_message_id", ""),
+            "last_major_run_ms": previous.get("last_major_run_ms", 0),
+        }
+        if major_write_allowed:
+            payload["last_major_message_id"] = last_message_id
+            payload["last_major_run_ms"] = now
         self.overlays.replace_overlay(
             scope,
             "_internal",
             self._profile_state_category(session_id),
-            json.dumps({"session_id": session_id, "last_message_id": last_message_id, "last_run_ms": now}, ensure_ascii=False, sort_keys=True),
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
             now,
             priority=0,
             max_chars=1000,

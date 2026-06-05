@@ -47,6 +47,7 @@ class MemoryMaintenanceWorker:
         *,
         session_id: str | None = None,
         scope: str = "project:advanced_agent",
+        allow_major_write: bool = False,
         raw_retention_ms: int = 7 * 24 * 60 * 60 * 1000,
         deleted_retention_ms: int = 30 * 24 * 60 * 60 * 1000,
         archive_grace_ms: int = 0,
@@ -55,7 +56,7 @@ class MemoryMaintenanceWorker:
         now = self.time.wall_ms()
         result = MemoryMaintenanceResult()
         if session_id:
-            result.profile_id = self.preferences.update_from_session(session_id, scope=scope)
+            result.profile_id = self.preferences.update_from_session(session_id, scope=scope, allow_major_write=allow_major_write)
             result.pruned_raw_rows = self.sessions.prune_compacted_before_ms(
                 session_id,
                 cutoff_ms=now - raw_retention_ms,

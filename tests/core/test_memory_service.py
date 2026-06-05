@@ -245,6 +245,36 @@ def test_small_model_observer_without_major_writer_does_not_write_durable_trait(
     assert app.memory.recent(scope="project:no-major", type="user_trait", limit=5) == []
 
 
+def test_background_profile_maintenance_defers_major_writer_by_default(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    model = FakeProfileModel({
+        "patches": [{
+            "action": "add",
+            "summary": "Should only be written by explicit or batched major approval",
+            "evidence": "user said it",
+            "confidence": 0.95,
+            "importance": 0.9,
+            "source_strength": "explicit_user",
+            "metadata": {"kind": "preference", "memory_type": "preference"},
+        }]
+    })
+    major = FakeMajorToolModel(model.payload["patches"])
+    app.preferences.maintainer = LLMProfileMaintainer(model)  # type: ignore[arg-type]
+    app.preferences.major_writer = MajorModelMemoryWriter(major)  # type: ignore[arg-type]
+    sid = app.create_session("profile-batch")
+    app.record_user_message(sid, "后台画像先候选，长期记忆写入批处理")
+
+    app.memory_maintenance.run(session_id=sid, scope="project:profile-batch", allow_major_write=False)
+
+    assert model.calls
+    assert major.calls == []
+    assert app.memory.recent(scope="project:profile-batch", type="preference", limit=5) == []
+
+    app.memory_maintenance.run(session_id=sid, scope="project:profile-batch", allow_major_write=True)
+
+    assert major.calls
+
+
 def test_profile_maintenance_uses_cleaned_codex_tail_as_wrapper_evidence(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     model = FakeProfileModel({"patches": []})

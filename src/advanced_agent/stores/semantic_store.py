@@ -232,6 +232,26 @@ class SemanticStore:
         )
         return str(row["summary"]) if row else None
 
+    def summary_blocks(self, session_id: str, scope: str, *, limit: int = 24, max_chars: int = 24000) -> list[str]:
+        """Return active rolling summaries in append order for prompt-cache stability."""
+        rows = self.db.query_all(
+            """SELECT from_seq, to_seq, summary FROM semantic_summaries
+            WHERE session_id=? AND scope=? AND status='active'
+            ORDER BY to_seq DESC, created_at_ms DESC LIMIT ?""",
+            (session_id, scope, max(1, int(limit))),
+        )
+        selected = list(reversed(rows))
+        blocks: list[str] = []
+        total = 0
+        budget = max(1000, int(max_chars))
+        for row in selected:
+            block = f"SUMMARY_BLOCK seq={int(row['from_seq'])}-{int(row['to_seq'])}\n{str(row['summary'])[:4000]}"
+            if blocks and total + len(block) + 2 > budget:
+                break
+            blocks.append(block)
+            total += len(block) + 2
+        return blocks
+
     def _event(self, row) -> SemanticEvent:
         return SemanticEvent(
             id=row["id"],

@@ -662,6 +662,7 @@ def _enqueue_codex_close_maintenance(app: RuntimeApp, session_id: str, codex_ses
         "log_path": str(log_path),
         "returncode": returncode,
         "source": "codex_wrapper_close",
+        "allow_major_write": True,
     }
     app.hooks.schedule_in(HookKind.MEMORY_MAINTENANCE, target=f"codex:{codex_session_id}", now_ms=now, delay_ms=0, payload=payload)
 

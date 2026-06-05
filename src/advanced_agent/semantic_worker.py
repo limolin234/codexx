@@ -10,7 +10,7 @@ from advanced_agent.stores.semantic_store import SemanticEvent, SemanticMemoryCa
 from advanced_agent.time_service import TimeService
 
 
-SEMANTIC_COMPACT_PROMPT_VERSION = "semantic_compact_v1"
+SEMANTIC_COMPACT_PROMPT_VERSION = "semantic_compact_v2_cache_ledger"
 SEMANTIC_APPROVE_PROMPT_VERSION = "semantic_memory_approve_v1"
 SEMANTIC_MEMORY_TOOL_NAME = "semantic_memory_decision"
 
@@ -244,30 +244,38 @@ class SemanticMaintenanceWorker:
 
     def _summarize(self, scope: str, events: list[SemanticEvent]) -> tuple[str, str | None]:
         transcript = self._transcript(events)
-        previous = self.store.latest_summary(events[0].session_id, scope) if events else None
+        previous_blocks = self.store.summary_blocks(events[0].session_id, scope, limit=24, max_chars=24000) if events else []
         if self.model is not None and transcript.strip():
             try:
                 raw = self.model.chat([
                     ChatMessage(role="system", content=(
-                        "You compress cleaned terminal dialogue for an agent runtime. "
-                        "Preserve user requests, corrections, architecture decisions, files changed, tool/test conclusions, and unresolved next steps. "
-                        "Do not create long-term memory claims; this is only a rolling session summary. "
-                        "Return concise plain text."
+                        "You compress cleaned terminal dialogue for an agent runtime.\n"
+                        "Prompt-cache contract: treat prior summary blocks as an append-only ledger. "
+                        "Do not rewrite or reinterpret them as durable memory; emit only a new summary checkpoint for the new event block.\n"
+                        "Preserve user requests, corrections, architecture decisions, files changed, tool/test conclusions, and unresolved next steps.\n"
+                        "Return concise plain text. Start with a short headline, then bullets when useful."
                     )),
-                    ChatMessage(role="user", content=self._model_input(scope, previous, transcript)),
+                    ChatMessage(role="user", content=self._model_input(scope, previous_blocks, transcript)),
                 ])
                 text = raw.strip()
                 if text:
                     return text[:4000], self.model.config.model
             except (LLMError, ValueError, TypeError):
                 pass
-        return self._deterministic_summary(previous, events), None
+        return self._deterministic_summary(previous_blocks[-1] if previous_blocks else None, events), None
 
-    def _model_input(self, scope: str, previous: str | None, transcript: str) -> str:
-        parts = [f"scope: {scope}"]
-        if previous:
-            parts.extend(["previous rolling summary:", previous[:2000]])
-        parts.extend(["new cleaned semantic events:", transcript[-12000:]])
+    def _model_input(self, scope: str, previous_blocks: list[str], transcript: str) -> str:
+        parts = [
+            "CACHE_LEDGER_FORMAT: semantic_compact_v2_cache_ledger",
+            f"scope: {scope}",
+            "task: append one new rolling-summary checkpoint for DYNAMIC_NEW_EVENTS.",
+            "rule: prior blocks are immutable context; do not replace them. New information is appended after them for provider prefix-cache stability.",
+        ]
+        if previous_blocks:
+            parts.extend(["IMMUTABLE_PRIOR_SUMMARY_BLOCKS:", "\n\n".join(previous_blocks)])
+        else:
+            parts.extend(["IMMUTABLE_PRIOR_SUMMARY_BLOCKS:", "(none)"])
+        parts.extend(["DYNAMIC_NEW_EVENTS:", transcript[-12000:]])
         return "\n\n".join(parts)
 
     def _transcript(self, events: list[SemanticEvent]) -> str:

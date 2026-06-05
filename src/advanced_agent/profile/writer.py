@@ -76,7 +76,7 @@ class MajorModelMemoryWriter:
             "scope": scope,
             "evidence": [
                 {"text": item.text[:1200], "message_id": item.message_id, "source_strength": item.source_strength}
-                for item in evidence[-8:]
+                for item in evidence[-32:]
             ],
             "existing_traits": [
                 {

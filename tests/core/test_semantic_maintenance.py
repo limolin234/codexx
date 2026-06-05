@@ -19,6 +19,17 @@ class FakeApprovalModel:
         ])
 
 
+class FakeSummaryModel:
+    def __init__(self, text: str = "new checkpoint") -> None:
+        self.text = text
+        self.calls = []
+        self.config = type("Config", (), {"model": "fake-summary"})()
+
+    def chat(self, messages):
+        self.calls.append(messages)
+        return self.text
+
+
 def test_semantic_maintenance_compacts_events_atomically(tmp_path) -> None:
     app = RuntimeApp.create(tmp_path / "state.sqlite")
     sid = app.create_session("semantic")
@@ -91,6 +102,32 @@ def test_routine_semantic_compaction_does_not_create_memory_candidate(tmp_path) 
 
     assert result.summaries_created == 1
     assert result.candidates_created == 0
+
+
+def test_semantic_summary_prompt_uses_append_only_cache_ledger(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    model = FakeSummaryModel("checkpoint one")
+    app.semantic_maintenance = SemanticMaintenanceWorker(app.semantic_store, app.time, model=model, memory=app.memory, approval_model=None)  # type: ignore[arg-type]
+    sid = app.create_session("semantic-cache")
+    for idx in range(3):
+        app.semantic_store.append_event(session_id=sid, kind="user_submit", text=f"第一批 {idx}", now_ms=app.time.wall_ms())
+
+    app.semantic_maintenance.run(session_id=sid, scope="project:semantic-cache", reason="user_submit_3", force=True)
+    assert model.calls
+    first_user = model.calls[-1][1].content
+    assert first_user is not None
+    assert "CACHE_LEDGER_FORMAT: semantic_compact_v2_cache_ledger" in first_user
+    assert "IMMUTABLE_PRIOR_SUMMARY_BLOCKS:\n\n(none)" in first_user
+    assert "DYNAMIC_NEW_EVENTS:" in first_user
+
+    model.text = "checkpoint two"
+    for idx in range(3):
+        app.semantic_store.append_event(session_id=sid, kind="user_submit", text=f"第二批 {idx}", now_ms=app.time.wall_ms())
+    app.semantic_maintenance.run(session_id=sid, scope="project:semantic-cache", reason="user_submit_3", force=True)
+    second_user = model.calls[-1][1].content
+    assert second_user is not None
+    assert "SUMMARY_BLOCK seq=1-3\ncheckpoint one" in second_user
+    assert second_user.index("IMMUTABLE_PRIOR_SUMMARY_BLOCKS:") < second_user.index("DYNAMIC_NEW_EVENTS:")
 
 
 def test_semantic_maintenance_degrades_without_api_keys(tmp_path) -> None:
