@@ -244,7 +244,7 @@ class SemanticMaintenanceWorker:
 
     def _summarize(self, scope: str, events: list[SemanticEvent]) -> tuple[str, str | None]:
         transcript = self._transcript(events)
-        previous_blocks = self.store.summary_blocks(events[0].session_id, scope, limit=24, max_chars=24000) if events else []
+        previous_blocks = self.store.summary_blocks(events[0].session_id, scope, limit=24, max_chars=24000, now_ms=self.time.wall_ms()) if events else []
         if self.model is not None and transcript.strip():
             try:
                 raw = self.model.chat([

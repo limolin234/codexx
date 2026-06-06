@@ -130,6 +130,54 @@ def test_semantic_summary_prompt_uses_append_only_cache_ledger(tmp_path) -> None
     assert second_user.index("IMMUTABLE_PRIOR_SUMMARY_BLOCKS:") < second_user.index("DYNAMIC_NEW_EVENTS:")
 
 
+def test_semantic_summary_blocks_append_suffix_instead_of_sliding(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.create_session("semantic-cache-no-slide")
+    scope = "project:semantic-cache-no-slide"
+    now = app.time.wall_ms()
+    for idx in range(5):
+        app.db.execute(
+            """INSERT INTO semantic_summaries
+            (id,session_id,scope,from_seq,to_seq,summary,source_hash,model_name,prompt_version,created_at_ms,status)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (f"sum_{idx}", sid, scope, idx * 10 + 1, idx * 10 + 10, f"checkpoint {idx}", f"hash_{idx}", "fake", "semantic_compact_v2_cache_ledger", now + idx, "active"),
+        )
+
+    blocks = app.semantic_store.summary_blocks(sid, scope, limit=2, max_chars=10000)
+
+    assert len(blocks) == 5
+    assert blocks[0].startswith("SUMMARY_BLOCK seq=1-10\ncheckpoint 0")
+    assert blocks[-1].startswith("SUMMARY_BLOCK seq=41-50\ncheckpoint 4")
+
+
+def test_semantic_summary_blocks_roll_up_only_when_budget_explodes(tmp_path) -> None:
+    app = RuntimeApp.create(tmp_path / "state.sqlite")
+    sid = app.create_session("semantic-cache-rollup")
+    scope = "project:semantic-cache-rollup"
+    now = app.time.wall_ms()
+    for idx in range(8):
+        app.db.execute(
+            """INSERT INTO semantic_summaries
+            (id,session_id,scope,from_seq,to_seq,summary,source_hash,model_name,prompt_version,created_at_ms,status)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (f"sum_{idx}", sid, scope, idx * 10 + 1, idx * 10 + 10, f"checkpoint {idx} " + ("x" * 500), f"hash_{idx}", "fake", "semantic_compact_v2_cache_ledger", now + idx, "active"),
+        )
+
+    blocks = app.semantic_store.summary_blocks(sid, scope, max_chars=2400)
+    first_blocks = list(blocks)
+    statuses = {row["id"]: row["status"] for row in app.db.query_all("SELECT id,status FROM semantic_summaries WHERE session_id=?", (sid,))}
+
+    assert blocks[0].startswith("SUMMARY_BLOCK seq=1-")
+    assert "ROLLED_UP_PRIOR_SUMMARY" in blocks[0]
+    assert any("checkpoint 7" in block for block in blocks)
+    assert any(status == "rolled_up" for status in statuses.values())
+
+    # A repeated read should not slide the visible prefix or create another
+    # roll-up when the folded ledger already fits.
+    blocks = app.semantic_store.summary_blocks(sid, scope, max_chars=2400)
+    assert blocks == first_blocks
+
+
 def test_semantic_maintenance_degrades_without_api_keys(tmp_path) -> None:
     config = tmp_path / ".env.json"
     config.write_text(

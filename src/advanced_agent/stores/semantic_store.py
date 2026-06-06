@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass
 
 from advanced_agent.models import new_id
@@ -13,6 +14,16 @@ def semantic_hash(*parts: object) -> str:
         h.update(str(part).encode("utf-8", errors="replace"))
         h.update(b"\0")
     return h.hexdigest()
+
+
+SUMMARY_BLOCK_MAX_CHARS = 4000
+SUMMARY_ROLLUP_STATUS = "rolled_up"
+SUMMARY_ROLLUP_PROMPT_VERSION = "semantic_compact_v2_cache_ledger_rollup"
+SUMMARY_ROLLUP_HEADER = "ROLLED_UP_PRIOR_SUMMARY"
+SUMMARY_LEDGER_MIN_BUDGET_CHARS = 1000
+SUMMARY_ROLLUP_SUFFIX_BUDGET_RATIO = 0.55
+SUMMARY_ROLLUP_ANCHOR_BUDGET_RATIO = 0.30
+SUMMARY_ROLLUP_ANCHOR_MAX_CHARS = 6000
 
 
 @dataclass(slots=True)
@@ -232,25 +243,133 @@ class SemanticStore:
         )
         return str(row["summary"]) if row else None
 
-    def summary_blocks(self, session_id: str, scope: str, *, limit: int = 24, max_chars: int = 24000) -> list[str]:
-        """Return active rolling summaries in append order for prompt-cache stability."""
-        rows = self.db.query_all(
-            """SELECT from_seq, to_seq, summary FROM semantic_summaries
+    def summary_blocks(self, session_id: str, scope: str, *, limit: int = 24, max_chars: int = 24000, now_ms: int | None = None) -> list[str]:
+        """Return active rolling summaries in append order for prompt-cache stability.
+
+        The cache contract is append-only: keep the same prefix and append new
+        suffix blocks.  Do not use a "latest N" sliding window, because dropping
+        the oldest visible block changes the request prefix and destroys provider
+        prompt-cache hits.  Only when the ledger is close to the prompt budget do
+        we roll the oldest prefix into one stable synthetic summary, then append
+        newer blocks after it.
+
+        ``limit`` is retained for API compatibility, but it is no longer a
+        sliding-window cutoff.  ``max_chars`` is the explosion guard.
+        """
+        _ = limit
+        budget = max(SUMMARY_LEDGER_MIN_BUDGET_CHARS, int(max_chars))
+        rows = self._active_summary_rows(session_id, scope)
+        if self._summary_blocks_chars(rows) > budget:
+            self._roll_up_summary_prefix(session_id, scope, rows, budget=budget, now_ms=now_ms)
+            rows = self._active_summary_rows(session_id, scope)
+        return [self._summary_block(row) for row in rows]
+
+    def _active_summary_rows(self, session_id: str, scope: str) -> list:
+        return self.db.query_all(
+            """SELECT id, from_seq, to_seq, summary, source_hash, model_name, prompt_version, created_at_ms
+            FROM semantic_summaries
             WHERE session_id=? AND scope=? AND status='active'
-            ORDER BY to_seq DESC, created_at_ms DESC LIMIT ?""",
-            (session_id, scope, max(1, int(limit))),
+            ORDER BY from_seq ASC, to_seq ASC, created_at_ms ASC""",
+            (session_id, scope),
         )
-        selected = list(reversed(rows))
-        blocks: list[str] = []
-        total = 0
-        budget = max(1000, int(max_chars))
-        for row in selected:
-            block = f"SUMMARY_BLOCK seq={int(row['from_seq'])}-{int(row['to_seq'])}\n{str(row['summary'])[:4000]}"
-            if blocks and total + len(block) + 2 > budget:
+
+    def _summary_block(self, row) -> str:
+        return f"SUMMARY_BLOCK seq={int(row['from_seq'])}-{int(row['to_seq'])}\n{str(row['summary'])[:SUMMARY_BLOCK_MAX_CHARS]}"
+
+    def _summary_blocks_chars(self, rows: list) -> int:
+        if not rows:
+            return 0
+        return sum(len(self._summary_block(row)) + 2 for row in rows)
+
+    def _roll_up_summary_prefix(self, session_id: str, scope: str, rows: list, *, budget: int, now_ms: int | None = None) -> None:
+        if len(rows) <= 1:
+            return
+
+        prefix = self._rollup_prefix_rows(rows, budget=budget)
+        if not prefix:
+            return
+
+        from_seq = int(prefix[0]["from_seq"])
+        to_seq = int(prefix[-1]["to_seq"])
+        rollup = self._rollup_summary_text(prefix, max_chars=self._rollup_anchor_chars(budget))
+        source_hash = semantic_hash("semantic_summary_rollup", session_id, scope, from_seq, to_seq, [row["id"] for row in prefix], rollup)
+        existing = self.db.query_one(
+            "SELECT id FROM semantic_summaries WHERE session_id=? AND scope=? AND source_hash=? AND status='active'",
+            (session_id, scope, source_hash),
+        )
+        if existing is not None:
+            return
+
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+        summary_id = new_id("semsum")
+        ids = [row["id"] for row in prefix]
+        placeholders = ",".join("?" for _ in ids)
+        with self.db.transaction():
+            self.db.execute(
+                f"UPDATE semantic_summaries SET status=? WHERE id IN ({placeholders})",
+                (SUMMARY_ROLLUP_STATUS, *ids),
+            )
+            self.db.execute(
+                """INSERT INTO semantic_summaries
+                (id,session_id,scope,from_seq,to_seq,summary,source_hash,model_name,prompt_version,created_at_ms,status)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    summary_id,
+                    session_id,
+                    scope,
+                    from_seq,
+                    to_seq,
+                    rollup,
+                    source_hash,
+                    None,
+                    SUMMARY_ROLLUP_PROMPT_VERSION,
+                    now_ms,
+                    "active",
+                ),
+            )
+
+    def _rollup_prefix_rows(self, rows: list, *, budget: int) -> list:
+        """Choose the oldest rows to fold while preserving a recent suffix."""
+        if len(rows) <= 1:
+            return []
+
+        # Keep a suffix intact and move only the oldest prefix forward into one
+        # synthetic anchor.  Leave room for both the anchor and future dynamic
+        # events; otherwise a single new block would immediately force another
+        # roll-up.
+        suffix_budget = max(SUMMARY_LEDGER_MIN_BUDGET_CHARS, int(budget * SUMMARY_ROLLUP_SUFFIX_BUDGET_RATIO))
+        suffix_chars = 0
+        suffix_len = 0
+        for row in reversed(rows):
+            block_chars = len(self._summary_block(row)) + 2
+            if suffix_len > 0 and suffix_chars + block_chars > suffix_budget:
                 break
-            blocks.append(block)
-            total += len(block) + 2
-        return blocks
+            suffix_chars += block_chars
+            suffix_len += 1
+
+        if suffix_len >= len(rows):
+            suffix_len = 1
+        return rows[: len(rows) - suffix_len]
+
+    def _rollup_anchor_chars(self, budget: int) -> int:
+        return max(
+            SUMMARY_LEDGER_MIN_BUDGET_CHARS,
+            min(SUMMARY_ROLLUP_ANCHOR_MAX_CHARS, int(budget * SUMMARY_ROLLUP_ANCHOR_BUDGET_RATIO)),
+        )
+
+    def _rollup_summary_text(self, rows: list, *, max_chars: int) -> str:
+        lines = [
+            SUMMARY_ROLLUP_HEADER,
+            f"range: seq={int(rows[0]['from_seq'])}-{int(rows[-1]['to_seq'])}",
+            "The older immutable summary ledger was folded only after reaching the context budget. Newer suffix blocks remain appended after this anchor.",
+        ]
+        for row in rows:
+            summary = " ".join(str(row["summary"]).split())
+            lines.append(f"- seq={int(row['from_seq'])}-{int(row['to_seq'])}: {summary[:500]}")
+            text = "\n".join(lines)
+            if len(text) >= max_chars:
+                return text[:max_chars]
+        return "\n".join(lines)[:max_chars]
 
     def _event(self, row) -> SemanticEvent:
         return SemanticEvent(
